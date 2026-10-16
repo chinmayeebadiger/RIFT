@@ -1,0 +1,2 @@
+# Rift foundation has no third-party runtime dependencies.
+# Runtime: Python 3.12.6 (see .python-version and pyproject.toml).

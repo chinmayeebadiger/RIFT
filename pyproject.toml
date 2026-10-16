@@ -1,0 +1,6 @@
+[project]
+name = "rift"
+version = "0.1.0"
+description = "Evidence-backed autonomous incident recovery system"
+requires-python = ">=3.12,<3.13"
+dependencies = []
