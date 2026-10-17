@@ -11,8 +11,11 @@ COPY . .
 
 RUN npm --prefix apps/web ci \
     && npm --prefix services/api ci \
+    && npm --prefix demo ci \
     && npm --prefix apps/web run build \
     && npm --prefix services/api run build \
+    && npm --prefix demo run build \
+    && npm --prefix demo test -- --run src/domain/shop.test.ts src/server.test.ts \
     && python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 FROM node:20.11.1-bookworm-slim AS runtime
@@ -24,7 +27,8 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=build /app/apps/web ./apps/web
 COPY --from=build /app/services/api ./services/api
+COPY --from=build /app/demo ./demo
 
-EXPOSE 3000 4000
+EXPOSE 3000 4000 4173
 
-CMD ["sh", "-c", "if [ \"$RIFT_SERVICE\" = \"web\" ]; then npm --prefix apps/web run start; else npm --prefix services/api run start; fi"]
+CMD ["sh", "-c", "if [ \"$RIFT_SERVICE\" = \"web\" ]; then npm --prefix apps/web run start; elif [ \"$RIFT_SERVICE\" = \"demo\" ]; then npm --prefix demo run start; else npm --prefix services/api run start; fi"]

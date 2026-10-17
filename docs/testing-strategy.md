@@ -43,6 +43,16 @@ type, lint, and security checks without requiring network access. CI may run
 additional image and dependency scans. A check that cannot run locally must be
 labelled as such rather than replaced with a no-op.
 
+## Repair-target demo
+
+The repository includes an offline Rift Shop under `demo/`. It is intentionally
+broken and provides a repeatable target for incident investigation exercises.
+`make test` runs its green smoke and HTTP integration tests so the website is
+known to start and respond. `make demo-regression` runs the four correct-
+behavior tests that are expected to fail on the baseline and become green as
+the defects are repaired. The suite uses fixed inputs and timestamps, so each
+failure is reproducible on a clean machine.
+
 ## Reliability targets to establish during M6
 
 Measure before committing targets. Proposed metrics are: deterministic replay

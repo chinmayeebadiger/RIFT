@@ -6,10 +6,12 @@ forms and ranks causal hypotheses, generates candidate patches, verifies those
 patches in isolated environments, and presents an evidence-backed recovery
 report.
 
-This repository contains the project foundation and a working application
-skeleton. The current UI uses static demo data while the API exposes typed
-in-memory incident records; autonomous investigation and patch execution are
-not enabled yet.
+This repository contains the project foundation, a working application
+skeleton, and a deliberately broken demo storefront. The current UI uses static
+demo data while the API exposes typed in-memory incident records; autonomous
+investigation and patch execution are not enabled yet. The storefront in
+`demo/` is a safe repair target for testing the full investigate, reproduce,
+patch, and verify loop without external services or credentials.
 
 ## Project documents
 
@@ -45,9 +47,19 @@ make typecheck
 make build
 ```
 
-`make test` runs the foundation checks plus both Vitest suites. After the
-dependencies have been installed, the test commands are deterministic and do
-not contact external services.
+`make test` runs the foundation checks, both existing Vitest suites, and the
+demo website smoke/integration suite. After the dependencies have been
+installed, the test commands are deterministic and do not contact external
+services. The demo's repair-target suite is intentionally failing on the
+baseline so a bug is observable before it is fixed:
+
+```sh
+make demo-regression
+```
+
+It contains four deterministic regression tests, one for each seeded defect.
+Run it again after a repair; it should become green without changing the test
+expectations.
 
 ## Reproducible setup
 
@@ -68,6 +80,28 @@ The API skeleton exposes:
 - `GET http://localhost:4000/api/incidents`
 - `GET http://localhost:4000/api/incidents/RIFT-042`
 
+### Broken demo website
+
+Install and run the storefront separately:
+
+```sh
+npm --prefix demo ci
+npm --prefix demo run start
+```
+
+Open <http://localhost:4173>. It is an intentionally small Rift Shop with
+four repair targets documented in [`demo/BUG_CATALOGUE.md`](demo/BUG_CATALOGUE.md):
+
+- cart quantities can become negative;
+- the displayed discount is applied twice;
+- an expired `WELCOME10` coupon is accepted; and
+- searching for `hoodie` misses `Rift Hoodie` because matching is case-sensitive.
+
+The smoke tests in `demo/src/domain/shop.test.ts` and
+`demo/src/server.test.ts` prove the baseline is reachable. The correct-behavior
+tests in `demo/src/domain/shop.regression.test.ts` are the automated
+reproduction contract for repair work.
+
 ## Docker
 
 The Dockerfile builds and verifies both workspaces. It runs the API by default:
@@ -81,6 +115,12 @@ Run the built frontend instead:
 
 ```sh
 docker run --rm -e RIFT_SERVICE=web -p 3000:3000 rift
+```
+
+Run the demo website from the image instead:
+
+```sh
+docker run --rm -e RIFT_SERVICE=demo -p 4173:4173 rift
 ```
 
 Configuration placeholders are documented in `.env.example`. Never commit
