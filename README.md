@@ -6,7 +6,8 @@ forms and ranks causal hypotheses, generates candidate patches, verifies those
 patches in isolated environments, and presents an evidence-backed recovery
 report.
 
-This repository contains the project foundation, the M1 intake implementation,
+This repository contains the project foundation, the Phase 0 architecture
+contracts, the M1 intake implementation,
 and a deliberately broken demo storefront. The dashboard loads the typed
 in-memory incident list and incident details from the local API. The API also
 validates and hashes untrusted incident manifests and imports them as
@@ -21,6 +22,12 @@ external services or credentials.
   assumptions, and acceptance gates.
 - [Architecture](docs/architecture.md) — components, data flow, trust
   boundaries, and proposed interfaces.
+- [Shared contracts](docs/contracts.md) — fixed contract names and schema
+  versioning strategy.
+- [Ownership map](docs/ownership.md) — directory and boundary ownership.
+- [Integration rules](docs/integration-rules.md) — rules for later sessions.
+- [Architecture decisions](docs/adr/) — persistence, model, sandbox, and
+  approval decisions.
 - [Roadmap](docs/roadmap.md) — milestones, deliverables, and exit criteria.
 - [Testing strategy](docs/testing-strategy.md) — test pyramid, fixtures,
   isolation tests, and reliability targets.
@@ -159,7 +166,12 @@ above until that is added.
 
 ## Status
 
-M1 intake phase complete: versioned domain contracts, deterministic validation,
-redaction and hashing utilities, local append-only evidence storage, and the
-manifest intake API are implemented. Investigation, patch generation, sandbox
-execution, and recovery reporting remain out of scope for this slice.
+Phase 0 architecture and contract gate complete. The shared `@rift/core`
+package fixes the eight contract names and schema-version strategy; the four
+ADRs fix persistence, model, sandbox, and approval policy. M1 deterministic
+intake is complete against its roadmap exit criteria: versioned manifest,
+deterministic validation, redaction and hashing utilities, local append-only
+evidence storage, and the manifest intake API are implemented and covered by
+offline tests. The default API test server remains in-memory; durable local
+selection is the only M1 integration caveat. Investigation, patch generation,
+sandbox execution, and recovery reporting remain out of scope for this slice.

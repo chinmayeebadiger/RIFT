@@ -87,9 +87,15 @@ model calls, sandbox creation, and any external action.
 4. **Rift -> production:** prohibited by default; only an explicit approval
    flow can cross this boundary.
 
-## Initial domain contracts
+## Shared contract package
 
-The first implementation should define versioned, serializable types for:
+The fixed wire contracts live in `packages/core/` and are published locally as
+`@rift/core`. It owns the serializable TypeScript declarations, schema
+constants, and runtime validators. The API keeps compatibility re-exports while
+callers migrate; the web app consumes shared ID types rather than redefining
+them. The package has no HTTP, filesystem, provider, Docker, or UI dependency.
+
+The contract set is:
 
 - `IncidentManifest`
 - `EvidenceItem`
@@ -99,8 +105,18 @@ The first implementation should define versioned, serializable types for:
 - `RecoveryReport`
 - `AuditEvent`
 
-Every contract needs a stable ID, schema version, timestamps, content hashes,
-and a correlation/incident ID. Schema changes must be additive or migrated.
+Every contract has a stable ID, schema version, timestamps, content hash, and
+incident/correlation IDs. Version 1 is closed-world and rejects unknown keys;
+additive changes require compatibility tests, while breaking changes create a
+new schema version and migration. See [`contracts.md`](contracts.md).
+
+## Phase 0 decisions
+
+The architecture gate is closed: persistence is local append-only JSONL,
+provider access is behind an untrusted model adapter with a deterministic fake,
+verification is behind a Docker-first runner interface, and all production or
+working-tree mutation remains explicitly human-controlled. The full decisions
+are recorded in [`docs/adr/`](adr/).
 
 ## Operational qualities
 

@@ -49,21 +49,21 @@ and silently modifying a user's working tree.
 - **Fail closed:** missing evidence, policy violations, or inconclusive tests
   yield an inconclusive result, never a success claim.
 
-## Decisions still open before implementation
+## Phase 0 decisions
 
-- supported repository languages and test runners;
-- sandbox backend (Docker first, with a runner interface for stronger isolation);
-- model/provider selection and data-retention policy;
-- persistence technology and retention period;
-- whether the first interface is CLI, local service, or both.
-
-These are intentionally recorded as decisions, not hidden assumptions. The
-first implementation slice should use local files and a deterministic fake
-model so it remains testable offline.
+The architecture gate has been resolved. TypeScript/Node.js owns the control
+plane and workers; Python remains foundation-only unless a later requirement
+proves it necessary. The local API is the primary interface, with a CLI allowed
+as a later adapter. The first release uses local append-only JSONL evidence,
+Docker-first disposable verification behind a runner interface, and a
+deterministic fake model behind a provider-neutral adapter. GPT-6 Astra is an
+optional real adapter, never a source of authority. Rift may ingest,
+investigate, generate, and verify, but it cannot mutate the user's working tree
+or production. See the four accepted ADRs and the shared contract reference.
 
 ## Acceptance gate for implementation
 
-Implementation begins after the architecture contracts are reviewed and the
-team can answer: what evidence may enter the system, what actions are allowed,
-how a sandbox is isolated, what constitutes a verified fix, and where a human
-must approve.
+Implementation begins only after the contracts in `packages/core/` and the
+integration rules are reviewed. The team can now answer what evidence may enter
+the system, what actions are allowed, how a sandbox is isolated, what
+constitutes a verified fix, and where a human must approve.

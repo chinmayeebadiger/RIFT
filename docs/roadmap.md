@@ -4,22 +4,27 @@ Each milestone ends with a demonstrable slice, documentation updates, and a
 green offline test command. No milestone permits production mutation unless a
 later security review explicitly changes that boundary.
 
-## M0 — Foundation and contracts (current)
+## M0 — Foundation and contracts (complete)
 
-Deliverables: repository reproducibility, architecture, domain contract draft,
+Deliverables: repository reproducibility, architecture, shared `@rift/core`
+contracts and validators, four decision ADRs, ownership map, integration rules,
 testing strategy, documentation plan, and safety principles.
 
-Exit criteria: `make test` works offline; reviewers agree on the incident
-manifest, evidence provenance, sandbox boundary, and meaning of “verified”.
+Exit criteria: `make test` works offline and reviewers can name the incident
+manifest, evidence provenance, sandbox boundary, contract version strategy, and
+meaning of “verified”.
 
-## M1 — Deterministic incident intake
+## M1 — Deterministic incident intake (complete)
 
 Deliverables: versioned manifest, local evidence store, redaction pipeline,
 content hashing, and CLI/API validation errors.
 
-Exit criteria: a fixture incident can be ingested twice with identical hashes;
-malformed, oversized, unauthorised, and secret-bearing inputs are handled by
-tests.
+Exit criteria met: the synthetic fixture is ingested twice with identical
+hashes; malformed, oversized, unauthorised, unsafe-path, and secret-bearing
+inputs are covered by deterministic tests. The durable `LocalEvidenceStore` is
+implemented and tested, while the API's default test server intentionally uses
+`InMemoryEvidenceStore`; selecting a durable path for a local production-like
+run remains follow-up integration work.
 
 ## M2 — Baseline reproduction and investigation
 

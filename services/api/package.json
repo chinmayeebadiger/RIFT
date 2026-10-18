@@ -10,6 +10,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@rift/core": "file:../../packages/core"
+  },
   "devDependencies": {
     "@types/node": "22.10.2",
     "typescript": "5.7.2",

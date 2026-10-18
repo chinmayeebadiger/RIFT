@@ -1,0 +1,215 @@
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+
+export const CONTRACT_SCHEMA_VERSION: 1;
+export const M1_SCHEMA_VERSION: 1;
+export type ContractSchemaVersion = typeof CONTRACT_SCHEMA_VERSION;
+export type SchemaVersion = ContractSchemaVersion;
+
+export type IncidentId = string;
+export type ManifestId = string;
+export type EvidenceId = string;
+export type HypothesisId = string;
+export type HypothesisSetId = string;
+export type CandidatePatchId = string;
+export type VerificationPlanId = string;
+export type VerificationResultId = string;
+export type RecoveryReportId = string;
+export type AuditEventId = string;
+export type CorrelationId = string;
+export type Timestamp = string;
+export type Sha256Hash = string;
+
+export interface VersionedContract {
+  readonly schemaVersion: ContractSchemaVersion;
+  readonly id: string;
+  readonly incidentId: string;
+  readonly correlationId: string;
+  readonly createdAt: string;
+  readonly contentHash: string;
+}
+
+export interface RepositoryRevision {
+  readonly repository: string;
+  readonly revision: string;
+}
+
+export interface ManifestLogSource {
+  readonly id: string;
+  readonly type: string;
+  readonly locator: string;
+  readonly contentHash?: string;
+}
+
+export interface CommandSpec {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly workingDirectory?: string;
+  readonly environment?: Readonly<Record<string, string>>;
+}
+
+export interface TimeWindow {
+  readonly start: string;
+  readonly end: string;
+}
+
+export interface IncidentPolicy {
+  readonly networkAccess?: "disabled" | "allowlisted";
+  readonly allowedCommands?: readonly string[];
+  readonly maxEvidenceBytes?: number;
+  readonly redactSecrets?: boolean;
+  readonly [key: string]: JsonValue | undefined;
+}
+
+export interface IncidentManifest extends VersionedContract {
+  readonly kind: "IncidentManifest";
+  readonly repositoryRevision: RepositoryRevision;
+  readonly allowedPaths: readonly string[];
+  readonly logSources: readonly ManifestLogSource[];
+  readonly reproductionCommand: CommandSpec;
+  readonly testCommands: readonly CommandSpec[];
+  readonly timeWindow: TimeWindow;
+  readonly policy: IncidentPolicy;
+}
+
+export type EvidenceRedactionStatus = "not-required" | "redacted" | "pending";
+export interface EvidenceSource { readonly type: string; readonly locator: string; }
+export interface EvidenceRedaction { readonly status: EvidenceRedactionStatus; readonly rules?: readonly string[]; }
+export interface Provenance {
+  readonly actor: string;
+  readonly tool?: string;
+  readonly sourceHash?: string;
+  readonly metadata?: Readonly<Record<string, JsonValue>>;
+}
+export type EvidenceProvenance = Provenance;
+export interface EvidenceItem extends VersionedContract {
+  readonly kind: "EvidenceItem";
+  readonly content: JsonValue;
+  readonly source: EvidenceSource;
+  readonly capturedAt: string;
+  readonly redaction: EvidenceRedaction;
+  readonly provenance: Provenance;
+}
+
+export type HypothesisStatus = "open" | "confirmed" | "rejected" | "inconclusive";
+export interface Hypothesis extends VersionedContract {
+  readonly kind: "Hypothesis";
+  readonly statement: string;
+  readonly status: HypothesisStatus;
+  readonly confidence: number;
+  readonly supportingEvidenceIds: readonly EvidenceId[];
+  readonly contradictingEvidenceIds: readonly EvidenceId[];
+  readonly assumptions: readonly string[];
+  readonly nextCheck: string;
+}
+export interface HypothesisSet extends VersionedContract {
+  readonly kind: "HypothesisSet";
+  readonly hypotheses: readonly Hypothesis[];
+  readonly rankingMethod: string;
+}
+
+export interface CandidatePatch extends VersionedContract {
+  readonly kind: "CandidatePatch";
+  readonly sourceHypothesisId: HypothesisId;
+  readonly baseRevision: RepositoryRevision;
+  readonly diff: string;
+  readonly touchedPaths: readonly string[];
+  readonly rationale: string;
+  readonly expectedInvariant: string;
+  readonly generatedBy: { readonly actor: "fake-model" | "gpt-6-astra" | "human"; readonly model?: string };
+}
+
+export interface VerificationPlan extends VersionedContract {
+  readonly kind: "VerificationPlan";
+  readonly candidatePatchId: CandidatePatchId;
+  readonly baseRevision: RepositoryRevision;
+  readonly baselineCommand: CommandSpec;
+  readonly verificationCommands: readonly CommandSpec[];
+  readonly timeoutMs: number;
+  readonly networkAccess: "disabled" | "allowlisted";
+}
+
+export type VerificationClassification = "verified" | "regressed" | "not-reproduced" | "inconclusive";
+export interface VerificationResult extends VersionedContract {
+  readonly kind: "VerificationResult";
+  readonly verificationPlanId: VerificationPlanId;
+  readonly classification: VerificationClassification;
+  readonly baselineExitCode: number | null;
+  readonly patchedExitCode: number | null;
+  readonly evidenceIds: readonly EvidenceId[];
+  readonly failure?: { readonly code: string; readonly message: string };
+}
+
+export type RecoveryReportStatus = VerificationClassification;
+export interface RecoveryReport extends VersionedContract {
+  readonly kind: "RecoveryReport";
+  readonly status: RecoveryReportStatus;
+  readonly hypothesisSetId: HypothesisSetId;
+  readonly candidatePatchIds: readonly CandidatePatchId[];
+  readonly verificationResultIds: readonly VerificationResultId[];
+  readonly facts: readonly string[];
+  readonly inferences: readonly string[];
+  readonly unknowns: readonly string[];
+  readonly approvalRequired: true;
+}
+
+export type AuditActorKind = "system" | "human" | "worker" | "model";
+export type AuditAction = "intake.validate" | "evidence.import" | "policy.evaluate" | "model.call" | "sandbox.create" | "external.action";
+export type AuditResult = "succeeded" | "failed" | "denied";
+export interface AuditEvent extends VersionedContract {
+  readonly kind: "AuditEvent";
+  readonly occurredAt: string;
+  readonly actor: { readonly kind: AuditActorKind; readonly id: string };
+  readonly action: AuditAction;
+  readonly policyDecision: { readonly outcome: "allowed" | "denied"; readonly policyId: string; readonly reasonCode: string };
+  readonly result: AuditResult;
+  readonly inputHashes: readonly string[];
+  readonly outputHashes: readonly string[];
+  readonly failure?: { readonly code: string };
+}
+
+export interface ValidationIssue { readonly path: string; readonly code: string; }
+export type ValidationResult<Value> =
+  | { readonly ok: true; readonly value: Value }
+  | { readonly ok: false; readonly issues: readonly ValidationIssue[] };
+
+export const MAX_ID_LENGTH: 128;
+export const MAX_STRING_LENGTH: 512;
+export const MAX_JSON_DEPTH: 16;
+export const MAX_JSON_KEYS: 128;
+export const MAX_ARRAY_LENGTH: 128;
+export const MAX_COMMAND_ARGUMENTS: 64;
+export const MAX_COMMAND_TIMEOUT_MS: 1800000;
+export const MAX_EVIDENCE_BYTES: 104857600;
+export const MAX_CONTENT_BYTES: 1048576;
+
+export function validateIncidentId(value: unknown): ValidationResult<IncidentId>;
+export function validateManifestId(value: unknown): ValidationResult<ManifestId>;
+export function validateEvidenceId(value: unknown): ValidationResult<EvidenceId>;
+export function validateHypothesisId(value: unknown): ValidationResult<HypothesisId>;
+export function validateHypothesisSetId(value: unknown): ValidationResult<HypothesisSetId>;
+export function validateCandidatePatchId(value: unknown): ValidationResult<CandidatePatchId>;
+export function validateVerificationPlanId(value: unknown): ValidationResult<VerificationPlanId>;
+export function validateVerificationResultId(value: unknown): ValidationResult<VerificationResultId>;
+export function validateRecoveryReportId(value: unknown): ValidationResult<RecoveryReportId>;
+export function validateAuditEventId(value: unknown): ValidationResult<AuditEventId>;
+export function validateCorrelationId(value: unknown): ValidationResult<CorrelationId>;
+export function validateTimestamp(value: unknown): ValidationResult<Timestamp>;
+export function validateSha256Hash(value: unknown): ValidationResult<Sha256Hash>;
+export function validateProvenance(value: unknown): ValidationResult<Provenance>;
+export function validateIncidentManifest(value: unknown): ValidationResult<IncidentManifest>;
+export function validateEvidenceItem(value: unknown): ValidationResult<EvidenceItem>;
+export function validateHypothesis(value: unknown): ValidationResult<Hypothesis>;
+export function validateHypothesisSet(value: unknown): ValidationResult<HypothesisSet>;
+export function validateCandidatePatch(value: unknown): ValidationResult<CandidatePatch>;
+export function validateVerificationPlan(value: unknown): ValidationResult<VerificationPlan>;
+export function validateVerificationResult(value: unknown): ValidationResult<VerificationResult>;
+export function validateRecoveryReport(value: unknown): ValidationResult<RecoveryReport>;
+export function validateAuditEvent(value: unknown): ValidationResult<AuditEvent>;
+export function isIncidentId(value: unknown): value is IncidentId;
+export function isManifestId(value: unknown): value is ManifestId;
+export function isEvidenceId(value: unknown): value is EvidenceId;
+export function isAuditEventId(value: unknown): value is AuditEventId;
+export function isCorrelationId(value: unknown): value is CorrelationId;
+export function isTimestamp(value: unknown): value is Timestamp;
+export function isSha256Hash(value: unknown): value is Sha256Hash;

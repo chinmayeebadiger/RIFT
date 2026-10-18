@@ -1,3 +1,5 @@
+import type { IncidentId } from "@rift/core";
+
 export type IncidentSeverity = "SEV-1" | "SEV-2" | "SEV-3" | "SEV-4";
 export type IncidentStatus = "investigating" | "mitigated" | "resolved";
 export type IncidentStage = "detected" | "reproduced" | "root-cause-identified" | "patch-review";
@@ -9,7 +11,7 @@ export interface IncidentTimelineEvent {
 }
 
 export interface Incident {
-  id: string;
+  id: IncidentId;
   severity: IncidentSeverity;
   status: IncidentStatus;
   stage: IncidentStage;
