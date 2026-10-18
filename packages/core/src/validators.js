@@ -140,6 +140,11 @@ function relativePath(value, path, issues) {
   return true;
 }
 
+function workingDirectory(value, path, issues) {
+  if (value === ".") return true;
+  return relativePath(value, path, issues);
+}
+
 function uniqueStrings(value, path, issues, validator = boundedString, requireAtLeastOne = false) {
   if (!arrayValue(value, path, issues)) return false;
   if (requireAtLeastOne && value.length === 0) issue(issues, path, "empty_array");
@@ -368,7 +373,7 @@ function validateCommand(value, path, issues) {
     if (value.args.length > MAX_COMMAND_ARGUMENTS) issue(issues, `${path}.args`, "too_many_items");
     value.args.forEach((argument, index) => boundedString(argument, `${path}.args[${index}]`, issues));
   }
-  if (hasOwn(value, "workingDirectory")) relativePath(value.workingDirectory, `${path}.workingDirectory`, issues);
+  if (hasOwn(value, "workingDirectory")) workingDirectory(value.workingDirectory, `${path}.workingDirectory`, issues);
   if (hasOwn(value, "environment") && requireRecord(value.environment, `${path}.environment`, issues)) {
     Object.keys(value.environment).sort().forEach((key) => {
       if (!ENVIRONMENT_KEY_PATTERN.test(key)) issue(issues, `${path}.environment.${key}`, "invalid_key");
