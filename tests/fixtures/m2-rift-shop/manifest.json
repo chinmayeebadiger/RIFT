@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "kind": "IncidentManifest",
+  "id": "m2-rift-shop-manifest",
+  "incidentId": "RIFT-M2-RIFT-SHOP",
+  "correlationId": "m2-rift-shop-run",
+  "createdAt": "2026-10-18T12:00:00.000Z",
+  "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "repositoryRevision": {
+    "repository": "rift",
+    "revision": "89bea49f373a23bda2666808976e2e15d707b6e7"
+  },
+  "allowedPaths": [
+    "demo/src/domain/shop.ts",
+    "demo/src/domain/shop.regression.test.ts",
+    "demo/src/server.ts",
+    "demo/package.json",
+    "tests/fixtures/m2-rift-shop"
+  ],
+  "logSources": [
+    {
+      "id": "rift-shop-runtime-log",
+      "type": "application-log",
+      "locator": "tests/fixtures/m2-rift-shop/logs/shop-api.log"
+    },
+    {
+      "id": "rift-shop-regression-output",
+      "type": "log",
+      "locator": "tests/fixtures/m2-rift-shop/logs/shop-regression.log"
+    }
+  ],
+  "reproductionCommand": {
+    "command": "npm",
+    "args": ["--prefix", "demo", "test", "--", "--run", "src/domain/shop.regression.test.ts"],
+    "workingDirectory": "."
+  },
+  "testCommands": [
+    {
+      "command": "npm",
+      "args": ["--prefix", "demo", "test", "--", "--run", "src/domain/shop.test.ts", "src/server.test.ts"],
+      "workingDirectory": "."
+    }
+  ],
+  "timeWindow": {
+    "start": "2026-10-18T11:55:00.000Z",
+    "end": "2026-10-18T12:00:00.000Z"
+  },
+  "policy": {
+    "networkAccess": "disabled",
+    "allowedCommands": ["npm"],
+    "maxEvidenceBytes": 262144,
+    "redactSecrets": true
+  }
+}

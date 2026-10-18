@@ -1,0 +1,11 @@
+{
+  "repository": "rift",
+  "revision": "89bea49f373a23bda2666808976e2e15d707b6e7",
+  "workingDirectory": ".",
+  "trackedFiles": {
+    "demo/src/domain/shop.ts": "sha256:dcd99894df7e0d7e25fa055ef6ce0872a3f15158b925454f96adb6e94c104fc3",
+    "demo/src/domain/shop.regression.test.ts": "sha256:388a882c34d3ec96d07f7ded11881015f8f0fc7e658b97acd902acdf97225f3b",
+    "demo/src/server.ts": "sha256:1eee13cb8b01de1b5286b341e6a38254444f5276cf90f2dcf8607e9b1572c18e",
+    "demo/package.json": "sha256:e4d16b9f0ac4fb796337e653ad9513988f41ac4664b25a04905e8231d03ceaab"
+  }
+}
