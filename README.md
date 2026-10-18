@@ -7,14 +7,17 @@ patches in isolated environments, and presents an evidence-backed recovery
 report.
 
 This repository contains the project foundation, the Phase 0 architecture
-contracts, the M1 intake implementation,
+contracts, the M1 intake implementation, the Phase 4 disposable verification
+runner,
 and a deliberately broken demo storefront. The dashboard loads the typed
 in-memory incident list, incident details, hypotheses, and candidate patches
 from the local API. The API also validates and hashes untrusted incident
 manifests and imports them as append-only evidence; sandbox verification, patch
-execution, and production actions are not enabled yet. A candidate patch is
+execution, and production actions are not enabled. A candidate patch is
 review-ready only when it is returned by the patch API; it is never labelled
-verified without a `VerificationResult`. The storefront in `demo/` is a safe
+verified without a `VerificationResult`. The runner verifies one supplied
+candidate patch in a disposable Docker workspace without mounting the host
+checkout. The storefront in `demo/` is a safe
 repair target for later investigate, reproduce, patch, and verify work without
 external services or credentials.
 
@@ -72,6 +75,19 @@ make demo-regression
 It contains four deterministic regression tests, one for each seeded defect.
 Run it again after a repair; it should become green without changing the test
 expectations.
+
+### Isolated verification runner
+
+`services/api/src/verification/` exposes the `SandboxRunner` interface and its
+Docker implementation. A run archives the requested pinned revision into a
+temporary staging directory, creates a read-only container with writable
+tmpfs-only workspace storage, runs the baseline command first, applies exactly
+one candidate patch, and then runs the allowlisted verification commands. The
+default plan uses `--network none`; an allowlisted network requires an explicit
+Docker network name. Command exit codes, stdout/stderr hashes, an environment
+fingerprint, and cleanup status are returned with the validated verification
+result. The host checkout is never bind-mounted or used as the command working
+directory.
 
 ## Reproducible setup
 
@@ -181,7 +197,11 @@ deterministic validation, redaction and hashing utilities, local append-only
 evidence storage, and the manifest intake API are implemented and covered by
 offline tests. The default API test server remains in-memory; durable local
 selection is the only M1 integration caveat. Investigation, patch generation,
-sandbox execution, and recovery reporting remain out of scope for this slice.
+and recovery reporting remain out of scope for this slice. Phase 4 now includes
+the isolated Docker runner and offline fake-process coverage for passing and
+failing verification fixtures, patch application, cleanup failure, command
+policy denial, and host-write protection. Report rendering, approval UI, and
+model behaviour remain out of scope.
 The M2 architecture baseline now fixes additive snapshot, command, normalization,
 timeline, hypothesis-citation, and investigation-result ports; specialist
 implementations and runtime M2 validators remain follow-up work.
