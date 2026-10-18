@@ -178,3 +178,7 @@ sandbox execution, and recovery reporting remain out of scope for this slice.
 The M2 architecture baseline now fixes additive snapshot, command, normalization,
 timeline, hypothesis-citation, and investigation-result ports; specialist
 implementations and runtime M2 validators remain follow-up work.
+The Phase 3 architecture baseline now fixes additive expected-invariant,
+diff-validation, model-proposal, patch-ranking, and patch-response shapes plus
+the sibling patch ports; specialist patch implementations, runtime M3 response
+validators, and HTTP routes remain follow-up work.

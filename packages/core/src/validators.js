@@ -9,12 +9,14 @@ export const MAX_COMMAND_ARGUMENTS = 64;
 export const MAX_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 export const MAX_EVIDENCE_BYTES = 100 * 1_048_576;
 export const MAX_CONTENT_BYTES = 1_048_576;
+export const MAX_DIFF_BYTES = MAX_CONTENT_BYTES;
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/u;
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^(?:[0-9a-f]{7,40}|[0-9a-f]{64})$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
+const UNSAFE_DIFF_CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 const PATH_SEPARATOR_PATTERN = /[\\]/u;
 const ENVIRONMENT_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
@@ -59,6 +61,13 @@ function stringValue(value, path, issues, { maxLength = MAX_STRING_LENGTH, nonEm
 
 function boundedString(value, path, issues) {
   return stringValue(value, path, issues);
+}
+
+function diffString(value, path, issues) {
+  if (!stringValue(value, path, issues, { maxLength: MAX_DIFF_BYTES, noControl: false })) return false;
+  if (UNSAFE_DIFF_CONTROL_CHARACTER_PATTERN.test(value)) issue(issues, path, "unsafe_control_character");
+  try { if (Buffer.byteLength(value, "utf8") > MAX_DIFF_BYTES) issue(issues, path, "too_large"); } catch { issue(issues, path, "invalid_type"); }
+  return true;
 }
 
 function enumValue(value, allowed, path, issues) {
@@ -257,6 +266,14 @@ function validateProvenanceValue(value, path, issues) {
   return true;
 }
 
+function validateExpectedInvariant(value, path, issues) {
+  if (!requireRecord(value, path, issues)) return false;
+  unknownKeys(value, ["statement", "verificationHint"], path, issues);
+  boundedString(required(value, "statement", path, issues), `${path}.statement`, issues);
+  if (hasOwn(value, "verificationHint")) boundedString(value.verificationHint, `${path}.verificationHint`, issues);
+  return true;
+}
+
 function validateEvidence(value, issues) {
   unknownKeys(value, ["kind", "schemaVersion", "id", "incidentId", "correlationId", "createdAt", "contentHash", "content", "source", "capturedAt", "redaction", "provenance"], "$", issues);
   enumValue(value.kind, ["EvidenceItem"], "$.kind", issues);
@@ -375,10 +392,11 @@ export const validateHypothesisSet = (value) => validateSimple(value, "Hypothesi
   if (arrayValue(record.hypotheses, "$.hypotheses", issues)) record.hypotheses.forEach((item, index) => { const result = validateHypothesis(item); if (!result.ok) result.issues.forEach((entry) => issue(issues, `$.hypotheses[${index}]${entry.path.slice(1)}`, entry.code)); });
   boundedString(record.rankingMethod, "$.rankingMethod", issues);
 });
-export const validateCandidatePatch = (value) => validateSimple(value, "CandidatePatch", ["sourceHypothesisId", "baseRevision", "diff", "touchedPaths", "rationale", "expectedInvariant", "generatedBy"], (record, issues) => {
+export const validateCandidatePatch = (value) => validateSimple(value, "CandidatePatch", ["sourceHypothesisId", "baseRevision", "diff", "touchedPaths", "rationale", "expectedInvariant", "expectedInvariantDetails", "generatedBy"], (record, issues) => {
   idValue(record.sourceHypothesisId, "$.sourceHypothesisId", issues);
   if (requireRecord(record.baseRevision, "$.baseRevision", issues)) { unknownKeys(record.baseRevision, ["repository", "revision"], "$.baseRevision", issues); boundedString(record.baseRevision.repository, "$.baseRevision.repository", issues); boundedString(record.baseRevision.revision, "$.baseRevision.revision", issues); }
-  boundedString(record.diff, "$.diff", issues); uniqueStrings(record.touchedPaths, "$.touchedPaths", issues, relativePath, true); boundedString(record.rationale, "$.rationale", issues); boundedString(record.expectedInvariant, "$.expectedInvariant", issues);
+  diffString(record.diff, "$.diff", issues); uniqueStrings(record.touchedPaths, "$.touchedPaths", issues, relativePath, true); boundedString(record.rationale, "$.rationale", issues); boundedString(record.expectedInvariant, "$.expectedInvariant", issues);
+  if (hasOwn(record, "expectedInvariantDetails")) validateExpectedInvariant(record.expectedInvariantDetails, "$.expectedInvariantDetails", issues);
   if (requireRecord(record.generatedBy, "$.generatedBy", issues)) { unknownKeys(record.generatedBy, ["actor", "model"], "$.generatedBy", issues); enumValue(record.generatedBy.actor, ["fake-model", "gpt-6-astra", "human"], "$.generatedBy.actor", issues); if (hasOwn(record.generatedBy, "model")) boundedString(record.generatedBy.model, "$.generatedBy.model", issues); }
 });
 export const validateVerificationPlan = (value) => validateSimple(value, "VerificationPlan", ["candidatePatchId", "baseRevision", "baselineCommand", "verificationCommands", "timeoutMs", "networkAccess"], (record, issues) => {
