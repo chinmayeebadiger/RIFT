@@ -6,3 +6,4 @@ export * from "./validators.js";
 export * from "./intake.js";
 export * from "../investigation/index.js";
 export * from "./normalization.js";
+export * from "./hypothesis-engine.js";
