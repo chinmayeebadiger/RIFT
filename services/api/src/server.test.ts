@@ -90,10 +90,10 @@ describe("Rift API routes", () => {
     });
     expect(hypotheses.hypotheses).toHaveLength(2);
     expect(patchesResponse.status).toBe(200);
-    expect(patches.patches).toHaveLength(2);
-    expect(patches.patches.every((patch: { kind: string; incidentId: string; generatedBy: { actor: string } }) =>
+    expect(patches).toHaveLength(2);
+    expect(patches.every((patch: { kind: string; incidentId: string; generatedBy: { actor: string } }) =>
       patch.kind === "CandidatePatch" && patch.incidentId === "RIFT-042" && patch.generatedBy.actor === "fake-model")).toBe(true);
-    expect(patches.patches.every((patch: Record<string, unknown>) => !Object.hasOwn(patch, "verificationResult"))).toBe(true);
+    expect(patches.every((patch: Record<string, unknown>) => !Object.hasOwn(patch, "verificationResult"))).toBe(true);
   });
 
   it("returns empty validated recovery collections for other known incidents", async () => {
@@ -106,7 +106,7 @@ describe("Rift API routes", () => {
     expect(hypotheses).toMatchObject({ kind: "HypothesisSet", incidentId: "RIFT-041" });
     expect(hypotheses.hypotheses).toEqual([]);
     expect(patchesResponse.status).toBe(200);
-    expect(patches).toEqual({ patches: [] });
+    expect(patches).toEqual([]);
   });
 
   it("exposes rejected investigation state without presenting a patch", async () => {
@@ -119,7 +119,7 @@ describe("Rift API routes", () => {
     expect(hypotheses.hypotheses).toHaveLength(1);
     expect(hypotheses.hypotheses[0].status).toBe("rejected");
     expect(patchesResponse.status).toBe(200);
-    expect(patches).toEqual({ patches: [] });
+    expect(patches).toEqual([]);
   });
 
   it("returns the existing missing-incident error for recovery routes", async () => {

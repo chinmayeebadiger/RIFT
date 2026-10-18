@@ -117,7 +117,7 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, evide
       return;
     }
 
-    sendJson(response, 200, { patches: findRecoveryData(incidentId)?.patches ?? [] });
+    sendJson(response, 200, findRecoveryData(incidentId)?.patches ?? []);
     return;
   }
 
