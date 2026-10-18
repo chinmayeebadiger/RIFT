@@ -16,7 +16,7 @@ function fixtures(correlationId = "correlation-1"): { manifest: IncidentManifest
   return {
     manifest: { ...base("IncidentManifest", "manifest-1", correlationId), repositoryRevision: REVISION, allowedPaths: ["src/checkout.ts"], logSources: [{ id: "log-1", type: "fixture", locator: "fixtures/log.txt" }], reproductionCommand: COMMAND, testCommands: [COMMAND], timeWindow: { start: TIME, end: "2026-10-18T11:00:00.000Z" }, policy: { networkAccess: "disabled", allowedCommands: ["npm"] } } as unknown as IncidentManifest,
     plan: { ...base("VerificationPlan", "plan-1", correlationId), candidatePatchId: "patch-1", baseRevision: REVISION, baselineCommand: COMMAND, verificationCommands: [COMMAND], timeoutMs: 30_000, networkAccess: "disabled" } as unknown as VerificationPlan,
-    patch: { ...base("CandidatePatch", "patch-1", correlationId), sourceHypothesisId: "hypothesis-1", baseRevision: REVISION, diff: "diff --git a/src/checkout.ts b/src/checkout.ts", touchedPaths: ["src/checkout.ts"], rationale: "Apply the discount once.", expectedInvariant: "The final total is discounted exactly once.", generatedBy: { actor: "fake-model" } } as unknown as CandidatePatch,
+    patch: { ...base("CandidatePatch", "patch-1", correlationId), sourceHypothesisId: "hypothesis-1", baseRevision: REVISION, diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n", touchedPaths: ["src/checkout.ts"], rationale: "Apply the discount once.", expectedInvariant: "The final total is discounted exactly once.", generatedBy: { actor: "fake-model" } } as unknown as CandidatePatch,
     correlationId,
   };
 }
