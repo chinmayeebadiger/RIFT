@@ -1,0 +1,48 @@
+{
+  "fixtureId": "m2-rift-shop",
+  "expectedFailureSignature": {
+    "name": "RIFT_SHOP_REGRESSION_FAILURE",
+    "status": 1,
+    "failedTests": 4,
+    "assertionFragments": [
+      "expected [] to deeply equal",
+      "expected 800 to be 900",
+      "expected true to be false",
+      "expected [] to deeply equal [ 'rift-hoodie' ]"
+    ]
+  },
+  "expectedInvestigation": {
+    "classification": "baseline-reproduced",
+    "uncertainty": "The baseline observations identify four local invariant violations; no patch has been proposed or verified.",
+    "hypotheses": [
+      {
+        "id": "m2-hypothesis-cart-quantity",
+        "statement": "adjustCartItem adds a decrement without enforcing the cart quantity invariant.",
+        "supportingEvidence": ["runtime-log", "source-shop"],
+        "confidence": 0.99,
+        "nextCheck": "Run the cart regression after clamping the resulting quantity and removing zero-quantity items."
+      },
+      {
+        "id": "m2-hypothesis-double-discount",
+        "statement": "calculateDisplayedCartTotal applies the already-calculated discount a second time.",
+        "supportingEvidence": ["runtime-log", "source-shop"],
+        "confidence": 0.99,
+        "nextCheck": "Compare displayedTotalCents with totalCents for a cart with one valid coupon."
+      },
+      {
+        "id": "m2-hypothesis-expired-coupon",
+        "statement": "validateCoupon ignores expiresAt when deciding whether WELCOME10 is valid.",
+        "supportingEvidence": ["runtime-log", "source-shop"],
+        "confidence": 0.98,
+        "nextCheck": "Evaluate the coupon at a fixed time after expiresAt and require rejection."
+      },
+      {
+        "id": "m2-hypothesis-case-sensitive-search",
+        "statement": "searchProducts compares original casing instead of normalizing query and product text.",
+        "supportingEvidence": ["runtime-log", "source-shop"],
+        "confidence": 0.99,
+        "nextCheck": "Search for hoodie and HOODIE and compare both results with Rift Hoodie."
+      }
+    ]
+  }
+}

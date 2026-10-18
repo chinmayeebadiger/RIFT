@@ -1,0 +1,32 @@
+{
+  "defects": [
+    {
+      "id": "BUG-001",
+      "path": "demo/src/domain/shop.ts",
+      "function": "adjustCartItem",
+      "invariant": "A decrement cannot leave an item with a negative or zero quantity.",
+      "observation": "The second decrement leaves a zero-quantity Rift Hoodie item in the cart."
+    },
+    {
+      "id": "BUG-002",
+      "path": "demo/src/domain/shop.ts",
+      "function": "calculateDisplayedCartTotal",
+      "invariant": "A discount is subtracted exactly once from the displayed total.",
+      "observation": "A 100-cent discount produces a displayed total of 800 cents from a 1,000-cent subtotal."
+    },
+    {
+      "id": "BUG-003",
+      "path": "demo/src/domain/shop.ts",
+      "function": "validateCoupon",
+      "invariant": "A coupon with an expiry before the checkout time is rejected.",
+      "observation": "The expired WELCOME10 coupon is accepted at the fixed reproduction time."
+    },
+    {
+      "id": "BUG-004",
+      "path": "demo/src/domain/shop.ts",
+      "function": "searchProducts",
+      "invariant": "Product search matches names without regard to query casing.",
+      "observation": "Searching for lowercase hoodie returns no products even though Rift Hoodie exists."
+    }
+  ]
+}
