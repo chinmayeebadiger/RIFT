@@ -594,11 +594,13 @@ export class BoundedCommandExecutor implements CommandExecutorPort {
         }
       }
     } catch (error) {
-      result = { status: "failed", exitCode: null, stdout: "", stderr: "", failure: legacyFailure("EXECUTOR_ERROR", error instanceof Error ? error.message : "command execution failed") };
+      const code = error instanceof Error && error.message === "WORKING_DIRECTORY_DENIED" ? "WORKING_DIRECTORY_DENIED" : "EXECUTOR_ERROR";
+      result = { status: code === "WORKING_DIRECTORY_DENIED" ? "blocked" : "failed", exitCode: null, stdout: "", stderr: "", failure: legacyFailure(code, error instanceof Error ? error.message : "command execution failed") };
     }
 
     const finishedAt = legacyNow(this.options.clock);
-    const fingerprint = sha256({ incidentId: request.incidentId, correlationId: request.correlationId, snapshotId: request.snapshotId, command: request.command, status: result.status, exitCode: result.exitCode, startedAt, finishedAt, failure: result.failure } as unknown as JsonValue);
+    const fingerprintInput = { incidentId: request.incidentId, correlationId: request.correlationId, snapshotId: request.snapshotId, command: request.command, status: result.status, exitCode: result.exitCode, startedAt, finishedAt, ...(result.failure === undefined ? {} : { failure: result.failure }) };
+    const fingerprint = sha256(fingerprintInput as unknown as JsonValue);
     const withoutHash = {
       schemaVersion: 1 as const,
       id: legacyId("execution", fingerprint),
