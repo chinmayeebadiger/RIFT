@@ -141,7 +141,11 @@ function parseFields(line: string): Readonly<Record<string, string>> {
   let index = 0;
   while (index < line.length) {
     while (index < line.length && /\s/u.test(line[index] ?? "")) index += 1;
-    if (index >= line.length || !KEY_START.test(line[index] ?? "")) break;
+    if (index >= line.length) break;
+    if (!KEY_START.test(line[index] ?? "")) {
+      while (index < line.length && !/\s/u.test(line[index] ?? "")) index += 1;
+      continue;
+    }
 
     const keyStart = index;
     index += 1;
