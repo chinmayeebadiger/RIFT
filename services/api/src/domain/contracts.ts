@@ -1,15 +1,28 @@
 /**
- * JSON-compatible values used by the domain contracts.
+ * JSON-compatible values used by Rift's domain contracts.
  *
  * Contracts deliberately use plain data rather than Dates, Maps, or class
  * instances so they can be persisted, hashed, and sent over an API unchanged.
+ * Runtime validation lives in validators.ts; these types do not imply that
+ * untrusted JSON has already been checked.
  */
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 /** M1 contract version. New versions must remain additive or be migrated. */
 export const CONTRACT_SCHEMA_VERSION = 1 as const;
+export const M1_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION;
 export type ContractSchemaVersion = typeof CONTRACT_SCHEMA_VERSION;
+export type SchemaVersion = ContractSchemaVersion;
+
+/** String aliases keep the wire contracts ergonomic while validators enforce their syntax. */
+export type IncidentId = string;
+export type ManifestId = string;
+export type EvidenceId = string;
+export type AuditEventId = string;
+export type CorrelationId = string;
+export type Timestamp = string;
+export type Sha256Hash = string;
 
 export interface VersionedContract {
   readonly schemaVersion: ContractSchemaVersion;
@@ -46,8 +59,8 @@ export interface TimeWindow {
 }
 
 /**
- * Policy is intentionally extensible: policy enforcement belongs to intake,
- * while this contract preserves the policy that was selected for a run.
+ * Policy is intentionally explicit and bounded. Policy enforcement belongs to
+ * intake, while this contract preserves the selected policy for a run.
  */
 export interface IncidentPolicy {
   readonly networkAccess?: "disabled" | "allowlisted";
@@ -81,12 +94,15 @@ export interface EvidenceRedaction {
   readonly rules?: readonly string[];
 }
 
-export interface EvidenceProvenance {
+/** Provenance is intentionally structured instead of an opaque metadata bag. */
+export interface Provenance {
   readonly actor: string;
   readonly tool?: string;
   readonly sourceHash?: string;
   readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
+
+export type EvidenceProvenance = Provenance;
 
 /** An immutable, content-addressed observation associated with an incident. */
 export interface EvidenceItem extends VersionedContract {
@@ -95,5 +111,37 @@ export interface EvidenceItem extends VersionedContract {
   readonly source: EvidenceSource;
   readonly capturedAt: string;
   readonly redaction: EvidenceRedaction;
-  readonly provenance: EvidenceProvenance;
+  readonly provenance: Provenance;
+}
+
+export type AuditActorKind = "system" | "human" | "worker" | "model";
+export type AuditAction =
+  | "intake.validate"
+  | "evidence.import"
+  | "policy.evaluate"
+  | "model.call"
+  | "sandbox.create"
+  | "external.action";
+export type AuditResult = "succeeded" | "failed" | "denied";
+
+/** Append-only record of a policy-relevant action or attempted action. */
+export interface AuditEvent extends VersionedContract {
+  readonly kind: "AuditEvent";
+  readonly occurredAt: string;
+  readonly actor: {
+    readonly kind: AuditActorKind;
+    readonly id: string;
+  };
+  readonly action: AuditAction;
+  readonly policyDecision: {
+    readonly outcome: "allowed" | "denied";
+    readonly policyId: string;
+    readonly reasonCode: string;
+  };
+  readonly result: AuditResult;
+  readonly inputHashes: readonly string[];
+  readonly outputHashes: readonly string[];
+  readonly failure?: {
+    readonly code: string;
+  };
 }
