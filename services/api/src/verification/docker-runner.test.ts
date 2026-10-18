@@ -18,7 +18,7 @@ function patch(revision = REVISION): CandidatePatch {
     contentHash: HASH,
     sourceHypothesisId: "hypothesis-1",
     baseRevision: revision,
-    diff: "diff --git a/src/checkout.ts b/src/checkout.ts",
+    diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n",
     touchedPaths: ["src/checkout.ts"],
     rationale: "Apply the discount once.",
     expectedInvariant: "The total is discounted exactly once.",
