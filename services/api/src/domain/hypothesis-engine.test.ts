@@ -36,6 +36,25 @@ function input(items: readonly EvidenceItem[]): HypothesisEngineInput {
 }
 
 describe("offline hypothesis engine", () => {
+  it("normalizes the M1-style failure signature and uses its source citation", () => {
+    const result = runHypothesisEngine(input([
+      evidence("checkout-log", 'route=/checkout status=503 signature=CHECKOUT_RETRY_POOL_EXHAUSTED message="checkout retry budget exhausted"'),
+    ]));
+
+    expect(result.failureSignatures).toEqual([
+      expect.objectContaining({
+        name: "CHECKOUT_RETRY_POOL_EXHAUSTED",
+        status: 503,
+        message: "checkout retry budget exhausted",
+        evidenceIds: ["checkout-log"],
+      }),
+    ]);
+    expect(result.hypothesisSet.hypotheses[0]).toMatchObject({
+      statement: "Checkout retry handling exhausts the configured retry budget.",
+      supportingEvidenceIds: ["checkout-log"],
+    });
+  });
+
   it("ranks a directly supported known cause above a weaker independent cause", () => {
     const result = runHypothesisEngine(input([
       evidence("discount-log", 'signature=checkout-total-mismatch status=500 message="discount applied twice"'),
