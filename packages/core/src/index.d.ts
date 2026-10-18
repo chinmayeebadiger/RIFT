@@ -20,6 +20,12 @@ export type CorrelationId = string;
 export type Timestamp = string;
 export type Sha256Hash = string;
 
+export type RepositorySnapshotId = string;
+export type CommandExecutionId = string;
+export type LogNormalizationId = string;
+export type InvestigationTimelineId = string;
+export type InvestigationResultId = string;
+
 export interface VersionedContract {
   readonly schemaVersion: ContractSchemaVersion;
   readonly id: string;
@@ -166,6 +172,110 @@ export interface AuditEvent extends VersionedContract {
   readonly inputHashes: readonly string[];
   readonly outputHashes: readonly string[];
   readonly failure?: { readonly code: string };
+}
+
+/** M2 baseline reproduction and investigation contracts. */
+export interface RepositorySnapshotFile {
+  readonly path: string;
+  readonly contentHash: Sha256Hash;
+  readonly byteLength: number;
+}
+
+export interface RepositorySnapshot extends VersionedContract {
+  readonly kind: "RepositorySnapshot";
+  readonly repositoryRevision: RepositoryRevision;
+  readonly files: readonly RepositorySnapshotFile[];
+  readonly adapter: { readonly name: string; readonly version: string };
+}
+
+export type CommandExecutionStatus = "succeeded" | "failed" | "timed-out" | "cancelled" | "blocked";
+export interface CommandExecution extends VersionedContract {
+  readonly kind: "CommandExecution";
+  readonly snapshotId: RepositorySnapshotId;
+  readonly command: CommandSpec;
+  readonly status: CommandExecutionStatus;
+  readonly exitCode: number | null;
+  readonly startedAt: Timestamp;
+  readonly finishedAt: Timestamp;
+  readonly stdoutEvidenceId?: EvidenceId;
+  readonly stderrEvidenceId?: EvidenceId;
+  readonly evidenceIds: readonly EvidenceId[];
+  readonly failure?: { readonly code: string; readonly message: string };
+}
+
+export type NormalizedLogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal" | "unknown";
+export interface NormalizedStackFrame {
+  readonly file?: string;
+  readonly line?: number;
+  readonly column?: number;
+  readonly function?: string;
+}
+export interface NormalizedStackTrace {
+  readonly exceptionType?: string;
+  readonly message?: string;
+  readonly frames: readonly NormalizedStackFrame[];
+}
+export interface NormalizedLogRecord {
+  readonly occurredAt?: Timestamp;
+  readonly level: NormalizedLogLevel;
+  readonly message: string;
+  readonly sourceEvidenceId: EvidenceId;
+  readonly sourceLineStart?: number;
+  readonly sourceLineEnd?: number;
+  readonly attributes?: Readonly<Record<string, JsonValue>>;
+  readonly stackTrace?: NormalizedStackTrace;
+}
+export interface LogNormalization extends VersionedContract {
+  readonly kind: "LogNormalization";
+  readonly inputEvidenceIds: readonly EvidenceId[];
+  readonly records: readonly NormalizedLogRecord[];
+  readonly normalizer: { readonly name: string; readonly version: string };
+}
+
+export type EvidenceCitationRelation = "supports" | "contradicts" | "context";
+export interface EvidenceCitation {
+  readonly evidenceId: EvidenceId;
+  readonly evidenceHash: Sha256Hash;
+  readonly relation: EvidenceCitationRelation;
+  readonly locator: string;
+  readonly excerptHash?: Sha256Hash;
+}
+export interface HypothesisEvidence {
+  readonly hypothesisId: HypothesisId;
+  readonly citations: readonly EvidenceCitation[];
+}
+
+export type TimelineEventKind = "observation" | "failure" | "command" | "commit" | "hypothesis" | "unknown";
+export type TimelineCertainty = "observed" | "inferred" | "unknown";
+export interface InvestigationTimelineEvent {
+  readonly sequence: number;
+  readonly occurredAt?: Timestamp;
+  readonly kind: TimelineEventKind;
+  readonly certainty: TimelineCertainty;
+  readonly summary: string;
+  readonly citations: readonly EvidenceCitation[];
+}
+export interface InvestigationTimeline extends VersionedContract {
+  readonly kind: "InvestigationTimeline";
+  readonly events: readonly InvestigationTimelineEvent[];
+  readonly timeWindow?: TimeWindow;
+}
+
+export type InvestigationStatus = "completed" | "inconclusive" | "failed";
+export interface InvestigationResult extends VersionedContract {
+  readonly kind: "InvestigationResult";
+  readonly snapshotId: RepositorySnapshotId;
+  readonly commandExecutionIds: readonly CommandExecutionId[];
+  readonly logNormalizationIds: readonly LogNormalizationId[];
+  readonly timelineId: InvestigationTimelineId;
+  readonly hypothesisSetId: HypothesisSetId;
+  readonly hypothesisEvidence: readonly HypothesisEvidence[];
+  readonly evidenceIds: readonly EvidenceId[];
+  readonly status: InvestigationStatus;
+  readonly facts: readonly string[];
+  readonly inferences: readonly string[];
+  readonly unknowns: readonly string[];
+  readonly failure?: { readonly code: string; readonly message: string };
 }
 
 export interface ValidationIssue { readonly path: string; readonly code: string; }

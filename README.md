@@ -175,3 +175,6 @@ evidence storage, and the manifest intake API are implemented and covered by
 offline tests. The default API test server remains in-memory; durable local
 selection is the only M1 integration caveat. Investigation, patch generation,
 sandbox execution, and recovery reporting remain out of scope for this slice.
+The M2 architecture baseline now fixes additive snapshot, command, normalization,
+timeline, hypothesis-citation, and investigation-result ports; specialist
+implementations and runtime M2 validators remain follow-up work.

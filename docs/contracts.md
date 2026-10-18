@@ -33,6 +33,11 @@ precision (`YYYY-MM-DDTHH:mm:ss.sssZ`). IDs are bounded, non-empty ASCII tokens.
 | `VerificationResult` | observed baseline-versus-patch outcome | runner | report/audit |
 | `RecoveryReport` | evidence-backed facts, inferences, unknowns | report stage | human reviewer |
 | `AuditEvent` | policy/action receipt | every boundary | operators/review |
+| `RepositorySnapshot` | immutable pinned source manifest | snapshot adapter | investigation/control plane |
+| `CommandExecution` | bounded command outcome and evidence links | command adapter | investigation/report |
+| `LogNormalization` | normalized log and stack observations | normalizer | timeline/investigation |
+| `InvestigationTimeline` | deterministic ordered observations | timeline builder | hypothesis/report |
+| `InvestigationResult` | evidence-backed M2 investigation outcome | investigation assembly | report/control plane |
 
 ## Versioning strategy
 
@@ -48,6 +53,11 @@ precision (`YYYY-MM-DDTHH:mm:ss.sssZ`). IDs are bounded, non-empty ASCII tokens.
    provenance; it never edits the old record.
 6. Contract fixtures are synthetic, JSON-round-trippable, and checked in with
    validator tests. Every boundary treats input as `unknown` until validated.
+
+M2 adds `EvidenceCitation` and `HypothesisEvidence` value shapes for replayable
+locations and relationships. They do not alter the closed-world `Hypothesis`
+contract; structured citations are carried by the M2 investigation result until
+the shared validators are extended with M2 fixtures.
 
 ## Meaning of verified
 

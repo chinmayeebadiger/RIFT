@@ -104,11 +104,18 @@ The contract set is:
 - `VerificationPlan` and `VerificationResult`
 - `RecoveryReport`
 - `AuditEvent`
+- `RepositorySnapshot`, `CommandExecution`, and `LogNormalization`
+- `InvestigationTimeline` and `InvestigationResult`
 
 Every contract has a stable ID, schema version, timestamps, content hash, and
 incident/correlation IDs. Version 1 is closed-world and rejects unknown keys;
 additive changes require compatibility tests, while breaking changes create a
 new schema version and migration. See [`contracts.md`](contracts.md).
+
+The M2 adapter ports are integration-owned in
+`services/api/src/investigation/ports.ts`. They accept explicit capabilities and
+return untrusted worker output for control-plane validation; specialist
+implementations are reserved by [`docs/ownership.md`](ownership.md).
 
 ## Phase 0 decisions
 
