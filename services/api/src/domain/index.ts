@@ -4,3 +4,4 @@ export * from "./hashing.js";
 export * from "./redaction.js";
 export * from "./validators.js";
 export * from "./intake.js";
+export * from "./hypothesis-engine.js";
