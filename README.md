@@ -7,22 +7,17 @@ patches in isolated environments, and presents an evidence-backed recovery
 report.
 
 This repository contains the project foundation, the Phase 0 architecture
-contracts, the M1 intake implementation, the Phase 4 disposable verification
-runner,
+contracts, the M1 intake implementation,
 and a deliberately broken demo storefront. The dashboard loads the typed
-in-memory incident list, incident details, hypotheses, and candidate patches
-from the local API. The API also validates and hashes untrusted incident
-manifests and imports them as append-only evidence; sandbox verification, patch
-execution, and production actions are not enabled. A candidate patch is
-review-ready only when it is returned by the patch API; it is never labelled
-verified without a `VerificationResult`. The runner verifies one supplied
-candidate patch in a disposable Docker workspace without mounting the host
-checkout. Phase 4 adds an offline verification control plane that runs a
-baseline before one candidate patch, executes configured checks, records
-correlated audit events, and classifies the result without mutating the user's
-working tree. The storefront in `demo/` is a safe
-repair target for later investigate, reproduce, patch, and verify work without
-external services or credentials.
+in-memory incident list, incident details, and recovery report/approval state
+from the local API. Recovery reports are assembled only from validated worker
+output and retain separate facts, inferences, unknowns, citations, hypotheses,
+patches, commands, environment fingerprints, baseline results, patched
+results, and final classification. The approval endpoint records a human
+decision only; it never applies a patch, pushes a branch, deploys, or calls
+production. The storefront in `demo/` is a safe repair target for later
+investigate, reproduce, patch, and verify work without external services or
+credentials.
 
 ## Project documents
 
@@ -79,19 +74,6 @@ It contains four deterministic regression tests, one for each seeded defect.
 Run it again after a repair; it should become green without changing the test
 expectations.
 
-### Isolated verification runner
-
-`services/api/src/verification/` exposes the `SandboxRunner` interface and its
-Docker implementation. A run archives the requested pinned revision into a
-temporary staging directory, creates a read-only container with writable
-tmpfs-only workspace storage, runs the baseline command first, applies exactly
-one candidate patch, and then runs the allowlisted verification commands. The
-default plan uses `--network none`; an allowlisted network requires an explicit
-Docker network name. Command exit codes, stdout/stderr hashes, an environment
-fingerprint, and cleanup status are returned with the validated verification
-result. The host checkout is never bind-mounted or used as the command working
-directory.
-
 ## Reproducible setup
 
 Requirements: Python 3.12.x, Node.js 20.11.1, npm, `make`, and optionally
@@ -110,11 +92,12 @@ The API exposes:
 - `GET http://localhost:4000/health`
 - `GET http://localhost:4000/api/incidents`
 - `GET http://localhost:4000/api/incidents/RIFT-042`
-- `GET http://localhost:4000/api/incidents/RIFT-042/hypotheses` — returns the
-  validated ranked `HypothesisSet` for the incident.
-- `GET http://localhost:4000/api/incidents/RIFT-042/patches` — returns a
-  JSON array of validated `CandidatePatch` records. The endpoint exposes
-  proposals only; it does not apply or verify them.
+- `GET http://localhost:4000/api/incidents/RIFT-042/report` — reads the
+  evidence-backed report and approval state
+- `POST http://localhost:4000/api/reports` — validates and stores a report
+  assembled from investigation, patch, verification, and evidence records
+- `POST http://localhost:4000/api/reports/:reportId/approval` — records an
+  explicit human approval or rejection intent; this is not a production action
 - `POST http://localhost:4000/api/incidents/intake` — accepts a versioned JSON
   incident manifest and returns its deterministic content hash and evidence
   record. Invalid, oversized, unauthorized, unsafe, or secret-bearing input
@@ -168,8 +151,8 @@ credentials, production logs, source snapshots, or generated incident data.
 
 ## What needs testing next
 
-The current implementation is a read-only dashboard, so the highest-value
-checks are:
+The current implementation keeps the dashboard and approval flow local and
+safe, so the highest-value checks are:
 
 - frontend loading, empty, API failure, retry, incident selection, and detail
   rendering states;
@@ -181,9 +164,9 @@ checks are:
   retry, and navigation controls;
 - end-to-end startup with the API rewrite (`make dev`), plus production build
   and Docker startup on a clean Linux machine;
-- once recovery actions exist: baseline reproduction, patch authorization,
-  isolation, timeout/cancellation, evidence provenance, verification semantics,
-  and the human approval boundary described in
+- baseline reproduction, patch authorization, isolation, timeout/cancellation,
+  evidence provenance, verification semantics, report replayability, and the
+  human approval boundary described in
   [`docs/testing-strategy.md`](docs/testing-strategy.md).
 
 The current Vitest setup covers the frontend API client and API routes. A real
@@ -199,26 +182,16 @@ intake is complete against its roadmap exit criteria: versioned manifest,
 deterministic validation, redaction and hashing utilities, local append-only
 evidence storage, and the manifest intake API are implemented and covered by
 offline tests. The default API test server remains in-memory; durable local
-selection is the only M1 integration caveat. Investigation, patch generation,
-and recovery reporting remain out of scope for this slice. Phase 4 now includes
-the isolated Docker runner and offline fake-process coverage for passing and
-failing verification fixtures, patch application, cleanup failure, command
-policy denial, and host-write protection. Report rendering, approval UI, and
-model behaviour remain out of scope.
+selection is the only M1 integration caveat. The report-and-approval slice now
+validates and assembles evidence-backed reports, exposes verification
+classifications (`running`, `verified`, `regressed`, `not-reproduced`,
+`inconclusive`, `cancelled`, and `policy-denied`), and records only explicit
+human approval intent. Investigation, patch generation, and sandbox execution
+remain separate bounded capabilities.
 The M2 architecture baseline now fixes additive snapshot, command, normalization,
 timeline, hypothesis-citation, and investigation-result ports; specialist
-<<<<<<< HEAD
 implementations and runtime M2 validators remain follow-up work.
 The Phase 3 architecture baseline now fixes additive expected-invariant,
 diff-validation, model-proposal, patch-ranking, and patch-response shapes plus
 the sibling patch ports; specialist patch implementations, runtime M3 response
 validators, and HTTP routes remain follow-up work.
-=======
-implementations and runtime M2 validators remain follow-up work. Phase 4
-verification orchestration is implemented behind
-`services/api/src/verification`: baseline reproduction is mandatory for
-`verified`, patch application is exactly once, retries are idempotency-keyed and
-bounded, cancellation reaches workers, cleanup always runs, concurrency is
-leased, and every side effect has a correlated audit event. Dashboard
-presentation remains out of scope.
->>>>>>> phase-4-orchestration
