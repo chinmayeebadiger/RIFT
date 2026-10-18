@@ -37,12 +37,31 @@ describe("incident manifest intake", () => {
     expect(() => intakeIncidentManifest({ ...validManifest(), allowedPaths: ["../secret", "/etc/passwd"] }, new InMemoryEvidenceStore())).toThrow(ManifestValidationError);
     expect(() => intakeIncidentManifest(validManifest(), new InMemoryEvidenceStore(), { authorized: false })).toThrow(/not authorized/iu);
     expect(() => intakeIncidentManifest(validManifest({ reproductionCommand: { command: "node", args: ["--token=ghp_12345678901234567890"] } }), new InMemoryEvidenceStore())).toThrow(/secret-bearing/iu);
+    expect(() => intakeIncidentManifest(validManifest({ reproductionCommand: { command: "node", environment: { API_KEY: "fixture-secret" } } }), new InMemoryEvidenceStore())).toThrow(/secret-bearing/iu);
     expect(() => intakeIncidentManifest(validManifest({ reproductionCommand: { command: "sh", args: ["-c", "node test.js"] } }), new InMemoryEvidenceStore())).toThrow(/single executable/iu);
     expect(() => intakeIncidentManifest(validManifest({ logSources: [{ id: "x", type: "url", locator: "https://example.test/log" }] }), new InMemoryEvidenceStore())).toThrow(/unsupported/iu);
+    expect(() => intakeIncidentManifest(validManifest({ logSources: [{ id: "x", type: "log", locator: "../outside.log" }] }), new InMemoryEvidenceStore())).toThrow(/safe relative path/iu);
     expect(() => intakeIncidentManifest(validManifest({ policy: { authorization: "denied" } }), new InMemoryEvidenceStore())).toThrow(/policy denies/iu);
     try { intakeIncidentManifest({ ...validManifest(), testCommands: "not-an-array" }, new InMemoryEvidenceStore()); } catch (error) {
       expect(error).toBeInstanceOf(ManifestValidationError);
       expect((error as ManifestValidationError).errors[0]).toMatchObject({ path: "$.testCommands" });
+    }
+  });
+
+  it("reports missing required fields with a stable validation code", () => {
+    const malformed = validManifest();
+    delete malformed.testCommands;
+
+    expect(() => intakeIncidentManifest(malformed, new InMemoryEvidenceStore())).toThrow(ManifestValidationError);
+    try {
+      intakeIncidentManifest(malformed, new InMemoryEvidenceStore());
+    } catch (error) {
+      expect(error).toBeInstanceOf(ManifestValidationError);
+      expect((error as ManifestValidationError).errors).toContainEqual({
+        code: "REQUIRED_FIELD",
+        path: "$.testCommands",
+        message: "Manifest field is invalid (missing)",
+      });
     }
   });
 

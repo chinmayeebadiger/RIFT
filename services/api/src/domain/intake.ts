@@ -49,6 +49,7 @@ function issueCode(code: string): string {
   const names: Record<string, string> = {
     invalid_type: "INVALID_TYPE",
     missing_required: "REQUIRED_FIELD",
+    missing: "REQUIRED_FIELD",
     empty_string: "INVALID_VALUE",
     invalid_value: "INVALID_VALUE",
     unsupported_schema_version: "INVALID_VALUE",
@@ -74,7 +75,13 @@ function scanSecrets(value: unknown, path: string, found: IntakeError[], depth =
   }
   if (depth > 20 || value === null || typeof value !== "object") return;
   if (Array.isArray(value)) value.forEach((item, index) => scanSecrets(item, `${path}[${index}]`, found, depth + 1));
-  else Object.entries(value).forEach(([key, item]) => scanSecrets(item, `${path}.${key}`, found, depth + 1));
+  else Object.entries(value).forEach(([key, item]) => {
+    const sensitiveKey = /(?:api[_-]?key|access[_-]?token|client[_-]?secret|credential|password|passwd|private[_-]?key|secret|token)/iu.test(key);
+    if (sensitiveKey && typeof item === "string" && item.length > 0) {
+      found.push({ code: "SECRET_INPUT", path: `${path}.${key}`, message: "Secret-bearing input is not accepted" });
+    }
+    scanSecrets(item, `${path}.${key}`, found, depth + 1);
+  });
 }
 
 function normalizeInput(input: Record<string, unknown>): Record<string, unknown> {
@@ -87,7 +94,11 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
     const copy = { ...(source as Record<string, unknown>) };
     if (typeof copy.locator === "string") copy.locator = copy.locator.replaceAll("\\", "/");
     return copy;
-  }).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  }).sort((left, right) => {
+    const leftKey = canonical(left);
+    const rightKey = canonical(right);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
   const commands = [normalized.reproductionCommand, ...(Array.isArray(normalized.testCommands) ? normalized.testCommands : [])];
   commands.forEach((command) => {
     if (command && typeof command === "object" && !Array.isArray(command)) {
@@ -130,7 +141,7 @@ function policyAndExecutionIssues(input: Record<string, unknown>): IntakeError[]
     if (!source || typeof source !== "object" || Array.isArray(source)) return;
     const record = source as Record<string, unknown>;
     if (record.type !== "log" && record.type !== "application-log" && record.type !== "stack-trace") issues.push({ code: "UNSUPPORTED_LOG_SOURCE", path: `$.logSources[${index}].type`, message: "Unsupported log source type" });
-    if (typeof record.locator === "string" && (record.locator.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(record.locator) || record.locator.split(/[\\/]/u).includes(".."))) issues.push({ code: "UNSAFE_LOCATOR", path: `$.logSources[${index}].locator`, message: "Locator must be a safe relative path" });
+    if (typeof record.locator === "string" && (record.locator.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(record.locator) || record.locator.includes(":") || record.locator.split(/[\\/]/u).includes("..") || record.locator.split(/[\\/]/u).includes(""))) issues.push({ code: "UNSAFE_LOCATOR", path: `$.logSources[${index}].locator`, message: "Locator must be a safe relative path" });
   });
   return issues;
 }
