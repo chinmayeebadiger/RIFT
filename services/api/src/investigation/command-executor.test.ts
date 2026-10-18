@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BoundedCommandExecutor } from "./command-executor.js";
+import { BoundedCommandExecutor, CommandExecutorAdapter, LocalProcessAdapter, RepositoryCommandExecutor } from "./command-executor.js";
 import { RepositorySnapshotReaderAdapter } from "./repository-snapshot.js";
 
 const temporaryDirectories: string[] = [];
@@ -50,7 +50,7 @@ describe("BoundedCommandExecutor", () => {
     const fixture = await createRepository();
     const reader = new RepositorySnapshotReaderAdapter({ repositoryRoot: fixture.directory, clock: () => "2026-01-01T00:00:00.000Z" });
     const snapshot = await reader.read(snapshotRequest(fixture.revision)) as { readonly id: string };
-    const executor = new BoundedCommandExecutor({ snapshotProvider: reader, clock: () => "2026-01-01T00:00:01.000Z" });
+    const executor = new BoundedCommandExecutor({ snapshotProvider: reader, processAdapter: LocalProcessAdapter(), clock: () => "2026-01-01T00:00:01.000Z" });
 
     const execution = await executor.execute(commandRequest(snapshot.id, {
       command: process.execPath,
@@ -67,7 +67,7 @@ describe("BoundedCommandExecutor", () => {
     const fixture = await createRepository();
     const reader = new RepositorySnapshotReaderAdapter({ repositoryRoot: fixture.directory, clock: () => "2026-01-01T00:00:00.000Z" });
     const snapshot = await reader.read(snapshotRequest(fixture.revision)) as { readonly id: string };
-    const executor = new BoundedCommandExecutor({ snapshotProvider: reader, clock: () => "2026-01-01T00:00:01.000Z" });
+    const executor = new BoundedCommandExecutor({ snapshotProvider: reader, processAdapter: LocalProcessAdapter(), clock: () => "2026-01-01T00:00:01.000Z" });
 
     const execution = await executor.execute(commandRequest(snapshot.id, {
       command: process.execPath,
@@ -83,7 +83,7 @@ describe("BoundedCommandExecutor", () => {
     const fixture = await createRepository();
     const reader = new RepositorySnapshotReaderAdapter({ repositoryRoot: fixture.directory });
     const snapshot = await reader.read(snapshotRequest(fixture.revision)) as { readonly id: string };
-    const executor = new BoundedCommandExecutor({ snapshotProvider: reader });
+    const executor = new BoundedCommandExecutor({ snapshotProvider: reader, processAdapter: LocalProcessAdapter() });
 
     const disallowed = await executor.execute({
       ...commandRequest(snapshot.id, { command: "sh", args: ["-c", "true"] }),
@@ -95,5 +95,41 @@ describe("BoundedCommandExecutor", () => {
     const escaped = await executor.execute(commandRequest(snapshot.id, { command: process.execPath, workingDirectory: "../" })) as { readonly status: string; readonly failure?: { code: string } };
     expect(escaped.status).toBe("blocked");
     expect(escaped.failure?.code).toBe("WORKING_DIRECTORY_DENIED");
+  });
+
+  it("keeps compatibility aliases and fails closed for missing or failed snapshot resolution", async () => {
+    expect(CommandExecutorAdapter).toBe(BoundedCommandExecutor);
+    expect(RepositoryCommandExecutor).toBe(BoundedCommandExecutor);
+    for (const getSnapshotWorkspace of [() => undefined, () => { throw new Error("sensitive host path"); }]) {
+      const executor = new BoundedCommandExecutor({
+        snapshotProvider: { getSnapshotWorkspace },
+        processAdapter: { start: () => { throw new Error("must not launch"); } },
+      });
+      const execution = await executor.execute(commandRequest("missing", { command: process.execPath }));
+      expect(execution).toMatchObject({ status: "blocked", failure: { code: "SNAPSHOT_NOT_FOUND" } });
+      expect(executor.getOutput(execution.id)).toEqual({ stdout: "", stderr: "" });
+      expect(JSON.stringify(execution)).not.toContain("sensitive host path");
+    }
+  });
+
+  it("captures redacted failed-reproduction output without exposing environment or credentials in metadata", async () => {
+    const fixture = await createRepository();
+    const reader = new RepositorySnapshotReaderAdapter({ repositoryRoot: fixture.directory });
+    const snapshot = await reader.read(snapshotRequest(fixture.revision)) as { readonly id: string };
+    const executor = new BoundedCommandExecutor({ snapshotProvider: reader, processAdapter: LocalProcessAdapter() });
+    const execution = await executor.execute({
+      ...commandRequest(snapshot.id, { command: process.execPath }),
+      command: {
+        command: process.execPath,
+        args: ["-e", "console.log(process.env.API_TOKEN); console.error('password=unrelated'); process.exit(7)", "--", "--token", "short-flag-token"],
+        environment: { API_TOKEN: "abc" },
+      },
+    });
+    expect(execution).toMatchObject({ status: "failed", exitCode: 7, failure: { code: "NONZERO_EXIT" } });
+    expect(execution.command.environment).toBeUndefined();
+    expect(execution.command.args?.at(-1)).toBe("[REDACTED]");
+    expect(executor.getOutput(execution.id)).toEqual({ stdout: "[REDACTED]\n", stderr: "[REDACTED]\n" });
+    expect(JSON.stringify(execution)).not.toContain("short-flag-token");
+    expect(JSON.stringify(execution)).not.toContain('"abc"');
   });
 });

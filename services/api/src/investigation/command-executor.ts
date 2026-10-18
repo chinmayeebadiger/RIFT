@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolve, relative, isAbsolute, sep } from "node:path";
-import type { CommandExecution, CommandExecutionStatus, CommandSpec, JsonValue, Sha256Hash } from "@rift/core";
+import type { CommandExecution, CommandSpec, JsonValue } from "@rift/core";
 import { sha256 } from "../domain/hashing.js";
+import { redactSecrets } from "../domain/redaction.js";
 import type {
   CommandExecutionRequest,
   CommandExecutor as CommandExecutorPort,
@@ -102,10 +103,6 @@ function defaultId(): string {
   return `command-execution-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`.slice(0, 128);
 }
 
-function hash(value: unknown): string {
-  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
-}
-
 function safeId(value: unknown, fallback: string): string {
   const candidate = typeof value === "string" ? value : fallback;
   const cleaned = candidate.replace(/[^A-Za-z0-9_-]/gu, "-").slice(0, 128);
@@ -115,8 +112,11 @@ function safeId(value: unknown, fallback: string): string {
 function redact(value: string, secrets: readonly string[]): string {
   let result = value;
   for (const secret of secrets) {
-    if (secret.length >= 4) result = result.split(secret).join("[REDACTED]");
+    if (secret.length > 0) result = result.split(secret).join("[REDACTED]");
   }
+  // Apply the shared evidence rules too: credentials printed by a command need
+  // not have originated in its explicit environment or argument list.
+  result = redactSecrets(result).value as string;
   return result.replace(/((?:password|passwd|secret|token|api[_-]?key|authorization)\s*[=:]\s*)[^\s,;]+/giu, "$1[REDACTED]");
 }
 
@@ -144,10 +144,18 @@ function redactCommandArguments(args: readonly string[], secrets: readonly strin
 function secretValues(command: Partial<CommandSpec> | undefined): string[] {
   if (!command) return [];
   const values = Object.entries(command.environment ?? {})
-    .filter(([key, value]) => /password|passwd|secret|token|key|auth/iu.test(key) || value.length >= 24)
+    .filter(([key, value]) => typeof value === "string" && (/password|passwd|secret|token|key|auth/iu.test(key) || value.length >= 24))
     .map(([, value]) => value)
-    .filter((value) => value.length >= 4);
-  return [...new Set(values)];
+    .filter((value) => value.length > 0);
+  let sensitiveValue = false;
+  for (const argument of Array.isArray(command.args) ? command.args : []) {
+    if (typeof argument !== "string") continue;
+    if (sensitiveValue && argument.length > 0) values.push(argument);
+    sensitiveValue = /^(?:--?)(?:password|passwd|secret|token|api[_-]?key|authorization)$/iu.test(argument);
+    const inline = /^(?:--?)?(?:password|passwd|secret|token|api[_-]?key|authorization)=(.+)$/iu.exec(argument);
+    if (inline?.[1]) values.push(inline[1]);
+  }
+  return [...new Set(values)].sort((left, right) => right.length - left.length);
 }
 
 function safeCommand(command: CommandSpec | undefined): SafeCommand {
@@ -183,7 +191,8 @@ function failureMessage(code: FailureCode): string {
 }
 
 function isPathEscape(value: string): boolean {
-  if (isAbsolute(value) || value.startsWith("~") || CONTROL_PATTERN.test(value)) return true;
+  const pathValue = value.startsWith("-") && value.includes("=") ? value.slice(value.indexOf("=") + 1) : value;
+  if (isAbsolute(pathValue) || /^[A-Za-z]:[/\\]/u.test(pathValue) || pathValue.startsWith("\\") || pathValue.startsWith("~") || CONTROL_PATTERN.test(value)) return true;
   const parts = value.replaceAll("\\", "/").split("/");
   return parts.includes("..") || /(?:^|[=:])\.\.(?:[/\\]|$)/u.test(value) || value.includes("\0");
 }
@@ -193,15 +202,23 @@ function isInside(root: string, candidate: string): boolean {
   return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
-function spawnProcessAdapter(spawnCommand: string | undefined, spawnArgs: (spec: ProcessLaunchSpec) => readonly string[], cwd: (spec: ProcessLaunchSpec) => string | undefined): ProcessAdapter {
+function spawnProcessAdapter(spawnCommand: string | undefined, spawnArgs: (spec: ProcessLaunchSpec) => readonly string[], cwd: (spec: ProcessLaunchSpec) => string | undefined, removeContainer?: () => Promise<void>, environmentInput = false): ProcessAdapter {
   return {
     start(spec) {
       const child: ChildProcess = spawn(spawnCommand ?? spec.command, [...spawnArgs(spec)], {
         cwd: cwd(spec),
-        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...spec.environment },
+        env: { PATH: "/usr/local/bin:/usr/bin:/bin", ...(environmentInput ? {} : spec.environment) },
         shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        stdio: [environmentInput ? "pipe" : "ignore", "pipe", "pipe"],
       });
+      // Docker reads the container environment from stdin. It must never be
+      // interpreted as configuration of the host Docker client (e.g. HOME or
+      // DOCKER_HOST), written to disk, or exposed in process-list arguments.
+      if (environmentInput) {
+        child.stdin?.on("error", () => undefined);
+        child.stdin?.end(Object.entries(spec.environment).map(([key, value]) => `${key}=${value}\n`).join(""));
+      }
       let outputBytes = 0;
       let resourceLimitExceeded = false;
       const chunks: Buffer[] = [];
@@ -210,21 +227,33 @@ function spawnProcessAdapter(spawnCommand: string | undefined, spawnArgs: (spec:
         outputBytes += chunk.byteLength;
         if (outputBytes > spec.resourceLimits.maxOutputBytes) {
           resourceLimitExceeded = true;
-          void kill();
+          void kill().catch(() => undefined);
           return;
         }
         target.push(chunk);
       };
       child.stdout?.on("data", (chunk: Buffer) => append(chunks, chunk));
       child.stderr?.on("data", (chunk: Buffer) => append(errorChunks, chunk));
-      let killRequested = false;
-      const kill = async (): Promise<void> => {
-        if (killRequested) return;
-        killRequested = true;
-        if (!child.killed) child.kill("SIGKILL");
+      let termination: Promise<void> | undefined;
+      const kill = (): Promise<void> => {
+        termination ??= (async () => {
+          try {
+            // Killing the Docker CLI alone leaves its container running.
+            await removeContainer?.();
+          } finally {
+            try {
+              if (process.platform !== "win32" && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+              else if (child.exitCode === null) child.kill("SIGKILL");
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+            }
+          }
+        })();
+        return termination;
       };
-      const abort = (): void => { void kill(); };
+      const abort = (): void => { void kill().catch(() => undefined); };
       spec.signal.addEventListener("abort", abort, { once: true });
+      if (spec.signal.aborted) abort();
       const completion = new Promise<ProcessExit>((resolveCompletion, reject) => {
         child.once("error", reject);
         child.once("close", (exitCode, signal) => {
@@ -243,7 +272,13 @@ function spawnProcessAdapter(spawnCommand: string | undefined, spawnArgs: (spec:
         kill,
         cleanup: async () => {
           spec.signal.removeEventListener("abort", abort);
-          if (!child.killed && child.exitCode === null) await kill();
+          let failed = false;
+          try { await kill(); } catch { failed = true; }
+          await completion.catch(() => undefined);
+          // Also cover cancellation while the Docker daemon was still creating
+          // the named container when the first removal was requested.
+          try { await removeContainer?.(); } catch { failed = true; }
+          if (failed) throw new Error("process cleanup failed");
         },
       };
     },
@@ -259,28 +294,50 @@ function localProcessAdapter(): ProcessAdapter {
  * for deterministic unit tests only; it must never be used for untrusted runs.
  */
 export function DockerProcessAdapter(image = "node:20.11.1-bookworm-slim"): ProcessAdapter {
-  return spawnProcessAdapter("docker", (spec) => {
-    if (spec.networkAccess === "allowlisted") {
-      throw new Error("allowlisted network requires a configured egress proxy");
-    }
-    const args = [
-      "run", "--rm", "--init", "--network=none", "--read-only",
-      "--cap-drop=ALL", "--security-opt=no-new-privileges",
-      `--pids-limit=${spec.resourceLimits.maxProcesses}`,
-      "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-      "--mount", `type=bind,src=${spec.cwd},dst=/workspace,readonly`,
-      "--workdir", "/workspace",
-    ];
-    if (spec.resourceLimits.maxMemoryBytes !== undefined) args.push(`--memory=${spec.resourceLimits.maxMemoryBytes}`);
-    if (spec.resourceLimits.maxCpuMs !== undefined) args.push(`--cpus=${Math.max(spec.resourceLimits.maxCpuMs / 1000, 0.001)}`);
-    // Values travel in the child environment, not in Docker's argv where they
-    // would be visible to host process-list observers.
-    for (const key of Object.keys(spec.environment)) args.push("--env", key);
-    return [...args, image, spec.command, ...spec.args];
-  }, () => undefined);
+  return {
+    start(spec) {
+      const name = `rift-command-${randomUUID()}`;
+      return spawnProcessAdapter("docker", (spec) => {
+        if (spec.networkAccess === "allowlisted") {
+          throw new Error("allowlisted network requires a configured egress proxy");
+        }
+        const args = [
+          "run", "--name", name, "--init", "--network=none", "--read-only",
+          "--cap-drop=ALL", "--security-opt=no-new-privileges",
+          // The init process occupies one PID in addition to the command budget.
+          `--pids-limit=${spec.resourceLimits.maxProcesses + 1}`,
+          "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+          "--mount", `type=bind,src=${spec.cwd},dst=/workspace,readonly`,
+          "--workdir", "/workspace",
+        ];
+        if (spec.resourceLimits.maxMemoryBytes !== undefined) args.push(`--memory=${spec.resourceLimits.maxMemoryBytes}`);
+        if (spec.resourceLimits.maxCpuMs !== undefined) args.push(`--cpus=${Math.max(spec.resourceLimits.maxCpuMs / 1000, 0.001)}`);
+        if (Object.keys(spec.environment).length > 0) args.push("--env-file", "/dev/stdin");
+        return [...args, image, spec.command, ...spec.args];
+      }, () => undefined, () => removeDockerContainer(name), true).start(spec);
+    },
+  };
+}
+
+function removeDockerContainer(name: string): Promise<void> {
+  return new Promise((resolveRemoval, reject) => {
+    const child = spawn("docker", ["rm", "--force", name], {
+      env: { PATH: "/usr/local/bin:/usr/bin:/bin" }, shell: false, stdio: ["ignore", "ignore", "pipe"],
+    });
+    let missing = "";
+    child.stderr.on("data", (chunk: Buffer) => { missing = (missing + chunk.toString("utf8")).slice(-4096); });
+    const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("container cleanup timed out")); }, 5_000);
+    child.once("error", () => { clearTimeout(timer); reject(new Error("container cleanup failed")); });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0 || /No such container:/u.test(missing)) resolveRemoval();
+      else reject(new Error("container cleanup failed"));
+    });
+  });
 }
 
 export class CommandExecutor implements CommandExecutorPort {
+  private readonly outputs = new Map<string, CommandOutput>();
   private readonly root: string;
   private readonly processes: ProcessAdapter;
   private readonly filesystem: FilesystemAdapter;
@@ -306,7 +363,7 @@ export class CommandExecutor implements CommandExecutorPort {
     };
   }
 
-  public async execute(request: CommandExecutionRequest): Promise<unknown> {
+  public async execute(request: CommandExecutionRequest): Promise<CommandExecution> {
     const startedAt = this.clock().toISOString();
     const command = safeCommand(request.command);
     let status: CommandExecution["status"] = "blocked";
@@ -315,10 +372,15 @@ export class CommandExecutor implements CommandExecutorPort {
     let handle: ProcessHandle | undefined;
     let timedOut = false;
     let cleanupFailed = false;
+    let captured: ProcessExit | undefined;
+    let outputLimit = this.limits.maxOutputBytes;
+    let termination: Promise<void> | undefined;
     const controller = new AbortController();
     const requestSignal = request.signal;
     const abortRequest = (): void => controller.abort();
-    const abortProcess = (): void => { if (handle) void handle.kill(); };
+    const abortProcess = (): void => {
+      if (handle) termination ??= Promise.resolve().then(() => handle!.kill()).catch(() => { cleanupFailed = true; });
+    };
     controller.signal.addEventListener("abort", abortProcess);
     if (requestSignal?.aborted) controller.abort();
     else requestSignal?.addEventListener("abort", abortRequest, { once: true });
@@ -334,10 +396,12 @@ export class CommandExecutor implements CommandExecutorPort {
         const cwd = await this.resolveWorkingDirectory(request.command.workingDirectory);
         const capability = request.capability;
         const limits = { ...this.limits, ...capability.resourceLimits };
+        outputLimit = limits.maxOutputBytes;
         const networkHosts = capability.allowedNetworkHosts ?? this.networkHosts;
         if (!this.validResourceLimits(limits)) {
           code = "PROCESS_LIMIT_EXCEEDED";
         } else {
+          if (controller.signal.aborted) throw new Error("cancelled");
           handle = await this.processes.start({
             command: request.command.command,
             args: [...(request.command.args ?? [])],
@@ -348,14 +412,20 @@ export class CommandExecutor implements CommandExecutorPort {
             allowedNetworkHosts: networkHosts,
             resourceLimits: limits,
           });
-          if (controller.signal.aborted) void handle.kill();
+          if (controller.signal.aborted) abortProcess();
           const timeout = setTimeout(() => {
             timedOut = true;
             controller.abort();
-            void handle?.kill();
           }, request.capability.timeoutMs);
           try {
-            const result = await handle.completion;
+            const completion = handle.completion.then((result) => { captured = result; return result; });
+            let stopWaiting!: () => void;
+            const stopped = new Promise<ProcessExit>((resolveStopped) => {
+              stopWaiting = () => resolveStopped({ exitCode: null });
+              controller.signal.addEventListener("abort", stopWaiting, { once: true });
+              if (controller.signal.aborted) stopWaiting();
+            });
+            const result = await Promise.race([completion, stopped]).finally(() => controller.signal.removeEventListener("abort", stopWaiting));
             exitCode = result.exitCode;
             if (timedOut) {
               status = "timed-out";
@@ -376,8 +446,8 @@ export class CommandExecutor implements CommandExecutorPort {
               code = "COMMAND_FAILED";
             }
           } catch {
-            status = requestSignal?.aborted ? "cancelled" : "failed";
-            code = requestSignal?.aborted ? "CANCELLED" : "EXECUTION_ERROR";
+            status = timedOut ? "timed-out" : requestSignal?.aborted ? "cancelled" : "failed";
+            code = timedOut ? "TIMED_OUT" : requestSignal?.aborted ? "CANCELLED" : "EXECUTION_ERROR";
           } finally {
             clearTimeout(timeout);
           }
@@ -407,6 +477,7 @@ export class CommandExecutor implements CommandExecutorPort {
       controller.signal.removeEventListener("abort", abortProcess);
       if (handle) {
         try {
+          await termination;
           await handle.cleanup();
         } catch {
           cleanupFailed = true;
@@ -436,7 +507,23 @@ export class CommandExecutor implements CommandExecutorPort {
       evidenceIds: [],
       ...(code ? { failure: { code, message: failureMessage(code) } } : {}),
     };
-    return { ...body, contentHash: hash(body) } satisfies CommandExecution;
+    const execution = { ...body, contentHash: sha256(body as unknown as JsonValue) } satisfies CommandExecution;
+    const secrets = secretValues(request.command);
+    const boundedText = (value: string, limit: number): string => {
+      const bytes = Buffer.from(redact(value, secrets));
+      if (bytes.byteLength <= limit) return bytes.toString("utf8");
+      // A partial UTF-8 character must not expand into a replacement character
+      // whose encoded size would exceed the byte budget.
+      return bytes.subarray(0, limit).toString("utf8").replace(/\uFFFD$/u, "");
+    };
+    const stdout = boundedText(captured?.stdout ?? "", outputLimit);
+    const stderr = boundedText(captured?.stderr ?? "", Math.max(0, outputLimit - Buffer.byteLength(stdout)));
+    this.outputs.set(execution.id, { stdout, stderr });
+    return execution;
+  }
+
+  public getOutput(executionId: string): CommandOutput | undefined {
+    return this.outputs.get(executionId);
   }
 
   private async policyFailure(request: CommandExecutionRequest): Promise<FailureCode | undefined> {
@@ -454,7 +541,7 @@ export class CommandExecutor implements CommandExecutorPort {
     const networkHosts = capability.allowedNetworkHosts ?? this.networkHosts;
     if (capability.allowedNetworkHosts !== undefined && (!Array.isArray(capability.allowedNetworkHosts) || capability.allowedNetworkHosts.some((host) => typeof host !== "string" || host.length === 0 || CONTROL_PATTERN.test(host)))) return "POLICY_INVALID";
     if (capability.networkAccess === "allowlisted" && (networkHosts.length === 0 || networkHosts.some((host) => typeof host !== "string" || host.length === 0 || CONTROL_PATTERN.test(host)))) return "NETWORK_POLICY_DENIED";
-    if (Object.keys(command.environment ?? {}).some((key) => DANGEROUS_ENVIRONMENT_KEY.test(key) || CONTROL_PATTERN.test(key) || typeof command.environment?.[key] !== "string" || CONTROL_PATTERN.test(command.environment[key]))) return "POLICY_INVALID";
+    if (Object.keys(command.environment ?? {}).some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || DANGEROUS_ENVIRONMENT_KEY.test(key) || typeof command.environment?.[key] !== "string" || CONTROL_PATTERN.test(command.environment[key]))) return "POLICY_INVALID";
     if ((command.args ?? []).some(isPathEscape)) return "ARGUMENT_PATH_ESCAPE";
     if (command.workingDirectory !== undefined && isPathEscape(command.workingDirectory)) return "FILESYSTEM_BOUNDARY";
     return undefined;
@@ -488,14 +575,14 @@ export class CommandExecutor implements CommandExecutorPort {
 export const LocalProcessAdapter = localProcessAdapter;
 
 /**
- * Compatibility adapter for the Phase 2 snapshot port. It remains separate
- * from the Phase 4 policy executor so callers can migrate without weakening
- * the newer process, filesystem, and secret-handling policy boundary.
+ * Compatibility adapter for the Phase 2 snapshot port. Snapshot resolution and
+ * legacy failure names are the only differences from the hardened executor.
  */
-export interface BoundedCommandExecutorOptions {
+export interface BoundedCommandExecutorOptions extends Omit<CommandExecutorOptions, "workspaceRoot" | "now"> {
   readonly snapshotProvider: SnapshotWorkspaceProvider;
   readonly clock?: () => string;
   readonly maxOutputBytes?: number;
+  /** @deprecated Ambient/custom host PATH is deliberately not forwarded. */
   readonly path?: string;
 }
 
@@ -504,171 +591,49 @@ export interface CommandOutput {
   readonly stderr: string;
 }
 
-interface LegacyProcessResult {
-  readonly status: CommandExecutionStatus;
-  readonly exitCode: number | null;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly failure?: { readonly code: string; readonly message: string };
-}
-
-const LEGACY_SHELL_METACHARACTERS = /[;&|`$<>\n\r]/u;
-const LEGACY_NETWORK_COMMANDS = new Set(["curl", "wget", "nc", "netcat", "ssh", "scp", "telnet"]);
-
-function legacyId(prefix: string, value: Sha256Hash): string {
-  return `${prefix}-${value.slice("sha256:".length, "sha256:".length + 32)}`;
-}
-
-function legacyInside(root: string, candidate: string): boolean {
-  const value = relative(root, candidate);
-  return value === "" || (value !== ".." && !value.startsWith(`..${sep}`) && !isAbsolute(value));
-}
-
-function validateLegacyCommand(command: CommandSpec): void {
-  if (typeof command.command !== "string" || command.command.length === 0 || LEGACY_SHELL_METACHARACTERS.test(command.command)) {
-    throw new Error("INVALID_REQUEST");
-  }
-  if (command.args !== undefined && (!Array.isArray(command.args) || command.args.length > 64 || command.args.some((arg) => typeof arg !== "string"))) {
-    throw new Error("INVALID_REQUEST");
-  }
-  if (command.workingDirectory !== undefined && (
-    command.workingDirectory.length === 0
-    || command.workingDirectory.includes("\\")
-    || command.workingDirectory.includes("\u0000")
-    || isAbsolute(command.workingDirectory)
-    || command.workingDirectory.split("/").some((part) => part === ".." || part === "")
-  )) throw new Error("WORKING_DIRECTORY_DENIED");
-}
-
-function legacyFailure(code: string, message: string): { readonly code: string; readonly message: string } {
-  return { code, message };
-}
-
-function legacyNow(clock?: () => string): string {
-  return clock?.() ?? new Date().toISOString();
-}
-
-function legacyBoundedBuffer(chunks: Buffer[], size: number, max: number): Buffer {
-  return Buffer.concat(chunks, Math.min(size, max)).subarray(0, max);
-}
-
 export class BoundedCommandExecutor implements CommandExecutorPort {
   private readonly outputs = new Map<string, CommandOutput>();
-  private readonly maxOutputBytes: number;
-  private readonly executablePath: string;
 
   public constructor(private readonly options: BoundedCommandExecutorOptions) {
-    this.maxOutputBytes = options.maxOutputBytes ?? DEFAULT_OUTPUT_BYTES;
-    if (!Number.isSafeInteger(this.maxOutputBytes) || this.maxOutputBytes < 1) throw new Error("maxOutputBytes must be positive");
-    this.executablePath = options.path ?? process.env.PATH ?? "";
+    if (options.maxOutputBytes !== undefined && (!Number.isSafeInteger(options.maxOutputBytes) || options.maxOutputBytes < 1)) throw new Error("maxOutputBytes must be positive");
   }
 
-  public async execute(request: CommandExecutionRequest): Promise<unknown> {
-    const startedAt = legacyNow(this.options.clock);
-    let result: LegacyProcessResult;
+  public async execute(request: CommandExecutionRequest): Promise<CommandExecution> {
+    let workspace: string | undefined;
     try {
-      validateLegacyCommand(request.command);
-      if (request.signal?.aborted) {
-        result = { status: "cancelled", exitCode: null, stdout: "", stderr: "", failure: legacyFailure("CANCELLED", "command execution was cancelled") };
-      } else if (!request.capability.allowedCommands.includes(request.command.command)) {
-        result = { status: "blocked", exitCode: null, stdout: "", stderr: "", failure: legacyFailure("COMMAND_NOT_ALLOWED", "command is not allowlisted") };
-      } else if (request.capability.networkAccess === "disabled" && LEGACY_NETWORK_COMMANDS.has(request.command.command)) {
-        result = { status: "blocked", exitCode: null, stdout: "", stderr: "", failure: legacyFailure("NETWORK_DISABLED", "network command is blocked") };
-      } else {
-        const workspace = this.options.snapshotProvider.getSnapshotWorkspace(request.snapshotId);
-        if (workspace === undefined) {
-          result = { status: "blocked", exitCode: null, stdout: "", stderr: "", failure: legacyFailure("SNAPSHOT_NOT_FOUND", "snapshot is not available") };
-        } else {
-          const root = resolve(workspace);
-          const candidate = resolve(root, request.command.workingDirectory ?? ".");
-          if (!legacyInside(root, candidate)) {
-            result = { status: "blocked", exitCode: null, stdout: "", stderr: "", failure: legacyFailure("WORKING_DIRECTORY_DENIED", "working directory escapes the snapshot workspace") };
-          } else {
-            const [realRoot, realCandidate] = await Promise.all([realpath(root), realpath(candidate)]);
-            if (!legacyInside(realRoot, realCandidate)) {
-              result = { status: "blocked", exitCode: null, stdout: "", stderr: "", failure: legacyFailure("WORKING_DIRECTORY_DENIED", "working directory escapes the snapshot workspace") };
-            } else {
-              result = await this.run(request, realCandidate);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      const code = error instanceof Error && error.message === "WORKING_DIRECTORY_DENIED" ? "WORKING_DIRECTORY_DENIED" : "EXECUTOR_ERROR";
-      result = { status: code === "WORKING_DIRECTORY_DENIED" ? "blocked" : "failed", exitCode: null, stdout: "", stderr: "", failure: legacyFailure(code, error instanceof Error ? error.message : "command execution failed") };
+      workspace = this.options.snapshotProvider.getSnapshotWorkspace(request.snapshotId);
+    } catch {
+      // Provider errors can contain host paths; treat unavailable snapshots alike.
     }
-
-    const finishedAt = legacyNow(this.options.clock);
-    const fingerprintInput = { incidentId: request.incidentId, correlationId: request.correlationId, snapshotId: request.snapshotId, command: request.command, status: result.status, exitCode: result.exitCode, startedAt, finishedAt, ...(result.failure === undefined ? {} : { failure: result.failure }) };
-    const fingerprint = sha256(fingerprintInput as unknown as JsonValue);
-    const withoutHash = {
-      schemaVersion: 1 as const,
-      id: legacyId("execution", fingerprint),
-      incidentId: request.incidentId,
-      correlationId: request.correlationId,
-      createdAt: finishedAt,
-      kind: "CommandExecution" as const,
-      snapshotId: request.snapshotId,
-      command: request.command,
-      status: result.status,
-      exitCode: result.exitCode,
-      startedAt,
-      finishedAt,
-      ...(result.failure === undefined ? {} : { failure: result.failure }),
-      evidenceIds: [],
+    const executor = new CommandExecutor({
+      ...this.options,
+      // An unknown snapshot must not fall back to cwd even with a test adapter.
+      workspaceRoot: workspace ?? "",
+      ...(this.options.clock ? { now: () => new Date(this.options.clock!()) } : {}),
+      resourceLimits: {
+        ...this.options.resourceLimits,
+        ...(this.options.maxOutputBytes === undefined ? {} : { maxOutputBytes: this.options.maxOutputBytes }),
+      },
+    });
+    const result = await executor.execute(request);
+    const legacyCodes: Readonly<Record<string, string>> = {
+      COMMAND_NOT_ALLOWLISTED: "COMMAND_NOT_ALLOWED",
+      FILESYSTEM_BOUNDARY: "WORKING_DIRECTORY_DENIED",
+      COMMAND_FAILED: "NONZERO_EXIT",
+      TIMED_OUT: "TIMEOUT",
     };
-    const execution: CommandExecution = { ...withoutHash, contentHash: sha256(withoutHash as unknown as JsonValue) };
-    this.outputs.set(execution.id, { stdout: result.stdout, stderr: result.stderr });
+    const { contentHash: _contentHash, ...body } = result;
+    const failure = result.failure?.code === "FILESYSTEM_BOUNDARY" && workspace === undefined
+      ? { code: "SNAPSHOT_NOT_FOUND", message: "Snapshot is not available." }
+      : result.failure ? { ...result.failure, code: legacyCodes[result.failure.code] ?? result.failure.code } : undefined;
+    const withoutHash = { ...body, ...(failure ? { failure } : {}) };
+    const execution = { ...withoutHash, contentHash: sha256(withoutHash as unknown as JsonValue) };
+    this.outputs.set(execution.id, executor.getOutput(result.id) ?? { stdout: "", stderr: "" });
     return execution;
   }
 
   public getOutput(executionId: string): CommandOutput | undefined {
     return this.outputs.get(executionId);
-  }
-
-  private run(request: CommandExecutionRequest, workingDirectory: string): Promise<LegacyProcessResult> {
-    return new Promise((resolveResult) => {
-      const child = spawn(request.command.command, [...(request.command.args ?? [])], {
-        cwd: workingDirectory,
-        env: { CI: "1", PATH: this.executablePath, NPM_CONFIG_OFFLINE: request.capability.networkAccess === "disabled" ? "true" : "false" },
-        shell: false,
-        detached: process.platform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
-      let stdoutBytes = 0;
-      let stderrBytes = 0;
-      let timedOut = false;
-      let cancelled = false;
-      let outputExceeded = false;
-      const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, request.capability.timeoutMs);
-      const abort = () => { cancelled = true; child.kill("SIGKILL"); };
-      request.signal?.addEventListener("abort", abort, { once: true });
-      const collect = (chunks: Buffer[], data: Buffer, size: number): number => {
-        const next = size + data.byteLength;
-        if (next <= this.maxOutputBytes) chunks.push(data); else outputExceeded = true;
-        return next;
-      };
-      child.stdout?.on("data", (data: Buffer) => { stdoutBytes = collect(stdoutChunks, data, stdoutBytes); if (outputExceeded) child.kill("SIGKILL"); });
-      child.stderr?.on("data", (data: Buffer) => { stderrBytes = collect(stderrChunks, data, stderrBytes); if (outputExceeded) child.kill("SIGKILL"); });
-      child.on("error", (error) => {
-        clearTimeout(timer);
-        request.signal?.removeEventListener("abort", abort);
-        resolveResult({ status: cancelled ? "cancelled" : timedOut ? "timed-out" : "failed", exitCode: null, stdout: "", stderr: "", failure: legacyFailure(cancelled ? "CANCELLED" : timedOut ? "TIMEOUT" : "SPAWN_FAILED", error.message) });
-      });
-      child.on("close", (exitCode) => {
-        clearTimeout(timer);
-        request.signal?.removeEventListener("abort", abort);
-        const stdout = legacyBoundedBuffer(stdoutChunks, stdoutBytes, this.maxOutputBytes).toString("utf8");
-        const stderr = legacyBoundedBuffer(stderrChunks, stderrBytes, this.maxOutputBytes).toString("utf8");
-        if (cancelled) resolveResult({ status: "cancelled", exitCode: null, stdout, stderr, failure: legacyFailure("CANCELLED", "command execution was cancelled") });
-        else if (timedOut) resolveResult({ status: "timed-out", exitCode: null, stdout, stderr, failure: legacyFailure("TIMEOUT", "command timed out") });
-        else if (outputExceeded) resolveResult({ status: "failed", exitCode: null, stdout, stderr, failure: legacyFailure("OUTPUT_LIMIT_EXCEEDED", "command output exceeded the configured bound") });
-        else if (exitCode === 0) resolveResult({ status: "succeeded", exitCode: 0, stdout, stderr });
-        else resolveResult({ status: "failed", exitCode, stdout, stderr, failure: legacyFailure("NONZERO_EXIT", `command exited with code ${exitCode ?? "unknown"}`) });
-      });
-    });
   }
 }
 
