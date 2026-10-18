@@ -10,6 +10,14 @@ export const MAX_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 export const MAX_EVIDENCE_BYTES = 100 * 1_048_576;
 export const MAX_CONTENT_BYTES = 1_048_576;
 export const MAX_DIFF_BYTES = MAX_CONTENT_BYTES;
+export const MAX_PATCH_BYTES = 1_048_576;
+export const MAX_PATCH_DIFF_BYTES = MAX_PATCH_BYTES;
+export const DEFAULT_PROTECTED_PATHS = Object.freeze([
+  ".git", ".github/workflows", ".gitlab-ci.yml", ".circleci", ".buildkite", ".travis.yml",
+  "Dockerfile", "docker-compose.yml", "docker-compose.yaml", "package-lock.json", "npm-shrinkwrap.json",
+  "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "Cargo.lock", "Gemfile.lock", "composer.lock",
+  "poetry.lock", "Pipfile.lock", "go.sum", "Podfile.lock", "requirements.lock",
+]);
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/u;
@@ -126,7 +134,7 @@ function arrayValue(value, path, issues) {
 function relativePath(value, path, issues) {
   if (!boundedString(value, path, issues)) return false;
   const parts = value.split("/");
-  if (value.startsWith("/") || PATH_SEPARATOR_PATTERN.test(value) || parts.includes("..") || parts.includes("")) {
+  if (value.startsWith("/") || PATH_SEPARATOR_PATTERN.test(value) || /^[A-Za-z]:/u.test(value) || parts.includes("..") || parts.includes(".") || parts.includes("")) {
     issue(issues, path, "invalid_relative_path");
   }
   return true;
@@ -144,6 +152,172 @@ function uniqueStrings(value, path, issues, validator = boundedString, requireAt
     }
   });
   return true;
+}
+
+const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/u;
+
+function patchPath(value, path, issues) {
+  if (typeof value !== "string") { issue(issues, path, "invalid_type"); return false; }
+  if (value.length === 0) issue(issues, path, "empty_string");
+  if (value.length > MAX_STRING_LENGTH) issue(issues, path, "too_long");
+  if (CONTROL_CHARACTER_PATTERN.test(value)) issue(issues, path, "control_character");
+  const parts = value.split("/");
+  if (value.startsWith("/") || PATH_SEPARATOR_PATTERN.test(value) || /^[A-Za-z]:/u.test(value) || parts.includes("..") || parts.includes(".") || parts.includes("")) {
+    issue(issues, path, "invalid_relative_path");
+    return false;
+  }
+  return true;
+}
+
+function patchPathFromHeader(value, prefix, path, issues) {
+  if (value === "/dev/null") return value;
+  if (!value.startsWith(prefix)) { issue(issues, path, "invalid_diff_path"); return null; }
+  const result = value.slice(prefix.length);
+  return patchPath(result, path, issues) ? result : null;
+}
+
+function patchMetadataIssue(line, path, issues) {
+  const fileMode = /^(?:new file mode|deleted file mode) ([0-7]{6})$/u.exec(line);
+  if (fileMode) {
+    if (!["100644", "100755"].includes(fileMode[1])) issue(issues, path, "unsupported_patch");
+    return true;
+  }
+  if (/^(?:new file mode|deleted file mode)\b/u.test(line)
+    || /^(?:old mode|new mode)\b/u.test(line)
+    || /^(?:similarity index|dissimilarity index|rename from|rename to|copy from|copy to)\b/u.test(line)
+    || /^Binary files .* differ$/u.test(line) || line === "GIT binary patch") {
+    issue(issues, path, "unsupported_patch");
+    return true;
+  }
+  return false;
+}
+
+function parsePatchIndex(line, path, issues) {
+  const match = /^index [0-9a-f]{4,64}\.{2}[0-9a-f]{4,64}(?: ([0-7]{6}))?$/u.exec(line);
+  if (!match) { issue(issues, path, "malformed_metadata"); return; }
+  if (match[1] !== undefined && !["100644", "100755"].includes(match[1])) issue(issues, path, "unsupported_patch");
+}
+
+function parseHunk(line, path, issues) {
+  const match = HUNK_HEADER_PATTERN.exec(line);
+  if (!match) { issue(issues, path, "malformed_hunk"); return null; }
+  const oldStart = Number(match[1]);
+  const oldCount = Number(match[2] ?? 1);
+  const newStart = Number(match[3]);
+  const newCount = Number(match[4] ?? 1);
+  if (![oldStart, oldCount, newStart, newCount].every(Number.isSafeInteger) || (oldStart === 0 && oldCount !== 0) || (newStart === 0 && newCount !== 0)) {
+    issue(issues, path, "malformed_hunk"); return null;
+  }
+  return { oldCount, newCount };
+}
+
+function protectedByDefault(path) {
+  const basename = path.slice(path.lastIndexOf("/") + 1);
+  if (path === ".git" || path.startsWith(".git/") || path === ".github/workflows" || path.startsWith(".github/workflows/")) return true;
+  if (DEFAULT_PROTECTED_PATHS.some((protectedPath) => path === protectedPath || path.startsWith(`${protectedPath}/`))) return true;
+  if (/^dockerfile(?:\..*)?$/iu.test(basename) || /^docker-compose(?:\..*)?\.(?:yml|yaml)$/iu.test(basename)) return true;
+  if (/^\.env(?:\..*)?$/u.test(basename) || /\.env$/u.test(basename)) return true;
+  if (path.split("/").some((part) => /^(?:secrets?|credentials?)$/iu.test(part))) return true;
+  if (/[.]\w*(?:pem|key|p12|pfx|jks|keystore|asc|gpg)$/iu.test(basename)) return true;
+  if (/(?:secret|credential|password|passwd|private[-_]?key|api[-_]?key|access[-_]?key)/iu.test(basename)) return true;
+  return false;
+}
+
+function pathMatchesScope(path, scope) { return path === scope || path.startsWith(`${scope}/`); }
+
+function patchOptionPaths(value, path, issues) {
+  if (!Array.isArray(value)) { issue(issues, path, "invalid_type"); return []; }
+  const seen = new Set();
+  const result = [];
+  value.forEach((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    if (patchPath(entry, entryPath, issues) && typeof entry === "string") {
+      if (seen.has(entry)) issue(issues, entryPath, "duplicate_value");
+      seen.add(entry); result.push(entry);
+    }
+  });
+  return result;
+}
+
+function candidatePatchSettings(options, issues) {
+  if (options === undefined) return { allowedPaths: undefined, protectedPaths: [], maxPatchBytes: MAX_PATCH_BYTES };
+  if (!isRecord(options)) { issue(issues, "$.options", "invalid_type"); return { allowedPaths: undefined, protectedPaths: [], maxPatchBytes: MAX_PATCH_BYTES }; }
+  const context = options.context === undefined ? {} : options.context;
+  if (!isRecord(context)) issue(issues, "$.options.context", "invalid_type");
+  const contextRecord = isRecord(context) ? context : {};
+  const allowedValue = options.allowedPaths ?? contextRecord.allowedPaths;
+  const protectedPaths = [];
+  for (const [key, source] of [["protectedPaths", options.protectedPaths], ["additionalProtectedPaths", options.additionalProtectedPaths], ["context.protectedPaths", contextRecord.protectedPaths], ["context.additionalProtectedPaths", contextRecord.additionalProtectedPaths]]) {
+    if (source !== undefined) protectedPaths.push(...patchOptionPaths(source, `$.options.${key}`, issues));
+  }
+  let maxPatchBytes = MAX_PATCH_BYTES;
+  const configuredLimit = options.maxPatchBytes ?? contextRecord.maxPatchBytes;
+  if (configuredLimit !== undefined) {
+    if (!Number.isSafeInteger(configuredLimit) || configuredLimit < 1 || configuredLimit > MAX_PATCH_BYTES) issue(issues, "$.options.maxPatchBytes", "invalid_integer");
+    else maxPatchBytes = configuredLimit;
+  }
+  return { allowedPaths: allowedValue === undefined ? undefined : patchOptionPaths(allowedValue, "$.options.allowedPaths", issues), protectedPaths, maxPatchBytes };
+}
+
+function validatePatchDiff(diff, touchedPaths, options, issues) {
+  if (typeof diff !== "string") { issue(issues, "$.diff", "invalid_type"); return; }
+  if (Buffer.byteLength(diff, "utf8") > options.maxPatchBytes) issue(issues, "$.diff", "too_large");
+  if (diff.length === 0) issue(issues, "$.diff", "empty_string");
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(diff) || /\r/u.test(diff)) issue(issues, "$.diff", "invalid_text");
+  if (!diff.endsWith("\n")) issue(issues, "$.diff", "missing_final_newline");
+  if (!diff.endsWith("\n")) return;
+  const lines = diff.split("\n"); lines.pop();
+  const changedPaths = [];
+  let index = 0;
+  while (index < lines.length) {
+    const header = lines[index];
+    const headerMatch = /^diff --git a\/(.+) b\/(.+)$/u.exec(header);
+    if (!headerMatch) { issue(issues, `$.diff.lines[${index + 1}]`, "malformed_metadata"); index += 1; continue; }
+    const oldGitPath = patchPath(headerMatch[1], `$.diff.lines[${index + 1}]`, issues) ? headerMatch[1] : null;
+    const newGitPath = patchPath(headerMatch[2], `$.diff.lines[${index + 1}]`, issues) ? headerMatch[2] : null;
+    if (oldGitPath === null || newGitPath === null || oldGitPath !== newGitPath) issue(issues, `$.diff.lines[${index + 1}]`, "unsupported_patch");
+    index += 1;
+    while (index < lines.length && !lines[index].startsWith("--- ") && !lines[index].startsWith("diff --git ")) {
+      if (lines[index].startsWith("index ")) parsePatchIndex(lines[index], `$.diff.lines[${index + 1}]`, issues);
+      else if (!patchMetadataIssue(lines[index], `$.diff.lines[${index + 1}]`, issues)) issue(issues, `$.diff.lines[${index + 1}]`, "malformed_metadata");
+      index += 1;
+    }
+    if (index >= lines.length || !lines[index].startsWith("--- ")) { issue(issues, "$.diff", "missing_old_file_header"); continue; }
+    const oldPath = patchPathFromHeader(lines[index].slice(4), "a/", `$.diff.lines[${index + 1}]`, issues); index += 1;
+    if (index >= lines.length || !lines[index].startsWith("+++ ")) { issue(issues, "$.diff", "missing_new_file_header"); continue; }
+    const newPath = patchPathFromHeader(lines[index].slice(4), "b/", `$.diff.lines[${index + 1}]`, issues); index += 1;
+    if (oldPath !== "/dev/null" && oldPath !== oldGitPath) issue(issues, "$.diff", "path_mismatch");
+    if (newPath !== "/dev/null" && newPath !== newGitPath) issue(issues, "$.diff", "path_mismatch");
+    if (oldPath === "/dev/null" && newPath === "/dev/null") issue(issues, "$.diff", "invalid_diff_path");
+    const changedPath = oldPath === "/dev/null" ? newPath : newPath === "/dev/null" ? oldPath : oldPath;
+    if (changedPath && changedPath !== "/dev/null") changedPaths.push(changedPath);
+    let hunkCount = 0;
+    while (index < lines.length && !lines[index].startsWith("diff --git ")) {
+      if (lines[index].startsWith("@@")) {
+        const hunk = parseHunk(lines[index], `$.diff.lines[${index + 1}]`, issues); index += 1;
+        if (hunk === null) continue;
+        hunkCount += 1; let oldLines = 0; let newLines = 0; let previousWasChange = false;
+        while (index < lines.length && !lines[index].startsWith("diff --git ") && !lines[index].startsWith("@@")) {
+          const hunkLine = lines[index];
+          if (hunkLine.startsWith(" ")) { oldLines += 1; newLines += 1; previousWasChange = true; }
+          else if (hunkLine.startsWith("+")) { newLines += 1; previousWasChange = true; }
+          else if (hunkLine.startsWith("-")) { oldLines += 1; previousWasChange = true; }
+          else if (hunkLine === "\\ No newline at end of file" && previousWasChange) previousWasChange = false;
+          else { issue(issues, `$.diff.lines[${index + 1}]`, "malformed_hunk"); }
+          index += 1;
+        }
+        if (oldLines !== hunk.oldCount || newLines !== hunk.newCount) issue(issues, `$.diff.lines[${index}]`, "hunk_line_count_mismatch");
+      } else { issue(issues, `$.diff.lines[${index + 1}]`, "malformed_hunk"); index += 1; }
+    }
+    if (hunkCount === 0) issue(issues, "$.diff", "missing_hunk");
+  }
+  const touched = new Set(touchedPaths.filter((path) => typeof path === "string"));
+  const extracted = new Set(changedPaths);
+  if (changedPaths.length !== extracted.size || extracted.size !== touched.size || [...extracted].some((path) => !touched.has(path))) issue(issues, "$.touchedPaths", "path_mismatch");
+  for (const path of extracted) {
+    if (protectedByDefault(path) || options.protectedPaths.some((protectedPath) => pathMatchesScope(path, protectedPath))) issue(issues, "$.touchedPaths", "protected_path");
+    if (options.allowedPaths !== undefined && !options.allowedPaths.some((allowedPath) => pathMatchesScope(path, allowedPath))) issue(issues, "$.touchedPaths", "path_out_of_scope");
+  }
 }
 
 function validateJsonValue(value, path, issues, depth = 0) {
@@ -392,13 +566,26 @@ export const validateHypothesisSet = (value) => validateSimple(value, "Hypothesi
   if (arrayValue(record.hypotheses, "$.hypotheses", issues)) record.hypotheses.forEach((item, index) => { const result = validateHypothesis(item); if (!result.ok) result.issues.forEach((entry) => issue(issues, `$.hypotheses[${index}]${entry.path.slice(1)}`, entry.code)); });
   boundedString(record.rankingMethod, "$.rankingMethod", issues);
 });
-export const validateCandidatePatch = (value) => validateSimple(value, "CandidatePatch", ["sourceHypothesisId", "baseRevision", "diff", "touchedPaths", "rationale", "expectedInvariant", "expectedInvariantDetails", "generatedBy"], (record, issues) => {
-  idValue(record.sourceHypothesisId, "$.sourceHypothesisId", issues);
-  if (requireRecord(record.baseRevision, "$.baseRevision", issues)) { unknownKeys(record.baseRevision, ["repository", "revision"], "$.baseRevision", issues); boundedString(record.baseRevision.repository, "$.baseRevision.repository", issues); boundedString(record.baseRevision.revision, "$.baseRevision.revision", issues); }
-  diffString(record.diff, "$.diff", issues); uniqueStrings(record.touchedPaths, "$.touchedPaths", issues, relativePath, true); boundedString(record.rationale, "$.rationale", issues); boundedString(record.expectedInvariant, "$.expectedInvariant", issues);
-  if (hasOwn(record, "expectedInvariantDetails")) validateExpectedInvariant(record.expectedInvariantDetails, "$.expectedInvariantDetails", issues);
-  if (requireRecord(record.generatedBy, "$.generatedBy", issues)) { unknownKeys(record.generatedBy, ["actor", "model"], "$.generatedBy", issues); enumValue(record.generatedBy.actor, ["fake-model", "gpt-6-astra", "human"], "$.generatedBy.actor", issues); if (hasOwn(record.generatedBy, "model")) boundedString(record.generatedBy.model, "$.generatedBy.model", issues); }
-});
+export const validateCandidatePatch = (value, options) => {
+  const optionIssues = [];
+  const settings = candidatePatchSettings(options, optionIssues);
+  const result = validateSimple(value, "CandidatePatch", ["sourceHypothesisId", "baseRevision", "diff", "touchedPaths", "rationale", "expectedInvariant", "expectedInvariantDetails", "generatedBy"], (record, issues) => {
+    idValue(record.sourceHypothesisId, "$.sourceHypothesisId", issues);
+    if (requireRecord(record.baseRevision, "$.baseRevision", issues)) {
+      unknownKeys(record.baseRevision, ["repository", "revision"], "$.baseRevision", issues);
+      boundedString(record.baseRevision.repository, "$.baseRevision.repository", issues);
+      const revision = record.baseRevision.revision;
+      if (typeof revision !== "string" || !REVISION_PATTERN.test(revision)) issue(issues, "$.baseRevision.revision", "invalid_repository_revision");
+    }
+    const validTouchedPaths = uniqueStrings(record.touchedPaths, "$.touchedPaths", issues, relativePath, true);
+    stringValue(record.diff, "$.diff", issues, { maxLength: MAX_PATCH_DIFF_BYTES, noControl: false });
+    boundedString(record.rationale, "$.rationale", issues); boundedString(record.expectedInvariant, "$.expectedInvariant", issues);
+    if (hasOwn(record, "expectedInvariantDetails")) validateExpectedInvariant(record.expectedInvariantDetails, "$.expectedInvariantDetails", issues);
+    if (requireRecord(record.generatedBy, "$.generatedBy", issues)) { unknownKeys(record.generatedBy, ["actor", "model"], "$.generatedBy", issues); enumValue(record.generatedBy.actor, ["fake-model", "gpt-6-astra", "human"], "$.generatedBy.actor", issues); if (hasOwn(record.generatedBy, "model")) boundedString(record.generatedBy.model, "$.generatedBy.model", issues); }
+    if (validTouchedPaths && Array.isArray(record.touchedPaths)) validatePatchDiff(record.diff, record.touchedPaths, settings, issues);
+  });
+  return optionIssues.length === 0 ? result : failure([...optionIssues, ...(result.ok ? [] : result.issues)]);
+};
 export const validateVerificationPlan = (value) => validateSimple(value, "VerificationPlan", ["candidatePatchId", "baseRevision", "baselineCommand", "verificationCommands", "timeoutMs", "networkAccess"], (record, issues) => {
   idValue(record.candidatePatchId, "$.candidatePatchId", issues); if (requireRecord(record.baseRevision, "$.baseRevision", issues)) { boundedString(record.baseRevision.repository, "$.baseRevision.repository", issues); boundedString(record.baseRevision.revision, "$.baseRevision.revision", issues); } validateCommand(record.baselineCommand, "$.baselineCommand", issues); if (arrayValue(record.verificationCommands, "$.verificationCommands", issues)) record.verificationCommands.forEach((command, index) => validateCommand(command, `$.verificationCommands[${index}]`, issues)); finiteInteger(record.timeoutMs, "$.timeoutMs", issues, 1, MAX_COMMAND_TIMEOUT_MS); enumValue(record.networkAccess, ["disabled", "allowlisted"], "$.networkAccess", issues);
 });
