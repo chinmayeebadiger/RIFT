@@ -228,7 +228,21 @@ export interface RecoveryReport extends VersionedContract {
 }
 
 export type AuditActorKind = "system" | "human" | "worker" | "model";
-export type AuditAction = "intake.validate" | "evidence.import" | "policy.evaluate" | "model.call" | "sandbox.create" | "external.action";
+export type AuditAction =
+  | "intake.validate"
+  | "evidence.import"
+  | "policy.evaluate"
+  | "model.call"
+  | "sandbox.create"
+  | "external.action"
+  | "verification.stage"
+  | "verification.execute"
+  | "verification.patch"
+  | "verification.check"
+  | "verification.cleanup"
+  | "verification.cancel"
+  | "verification.retry";
+export type VerificationAuditStage = "validate" | "baseline" | "patch" | "checks" | "classify" | "cleanup";
 export type AuditResult = "succeeded" | "failed" | "denied";
 export interface AuditEvent extends VersionedContract {
   readonly kind: "AuditEvent";
@@ -239,6 +253,8 @@ export interface AuditEvent extends VersionedContract {
   readonly result: AuditResult;
   readonly inputHashes: readonly string[];
   readonly outputHashes: readonly string[];
+  readonly stage?: VerificationAuditStage;
+  readonly attempt?: number;
   readonly failure?: { readonly code: string };
 }
 

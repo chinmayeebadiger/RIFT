@@ -17,7 +17,10 @@ execution, and production actions are not enabled. A candidate patch is
 review-ready only when it is returned by the patch API; it is never labelled
 verified without a `VerificationResult`. The runner verifies one supplied
 candidate patch in a disposable Docker workspace without mounting the host
-checkout. The storefront in `demo/` is a safe
+checkout. Phase 4 adds an offline verification control plane that runs a
+baseline before one candidate patch, executes configured checks, records
+correlated audit events, and classifies the result without mutating the user's
+working tree. The storefront in `demo/` is a safe
 repair target for later investigate, reproduce, patch, and verify work without
 external services or credentials.
 
@@ -204,8 +207,18 @@ policy denial, and host-write protection. Report rendering, approval UI, and
 model behaviour remain out of scope.
 The M2 architecture baseline now fixes additive snapshot, command, normalization,
 timeline, hypothesis-citation, and investigation-result ports; specialist
+<<<<<<< HEAD
 implementations and runtime M2 validators remain follow-up work.
 The Phase 3 architecture baseline now fixes additive expected-invariant,
 diff-validation, model-proposal, patch-ranking, and patch-response shapes plus
 the sibling patch ports; specialist patch implementations, runtime M3 response
 validators, and HTTP routes remain follow-up work.
+=======
+implementations and runtime M2 validators remain follow-up work. Phase 4
+verification orchestration is implemented behind
+`services/api/src/verification`: baseline reproduction is mandatory for
+`verified`, patch application is exactly once, retries are idempotency-keyed and
+bounded, cancellation reaches workers, cleanup always runs, concurrency is
+leased, and every side effect has a correlated audit event. Dashboard
+presentation remains out of scope.
+>>>>>>> phase-4-orchestration
