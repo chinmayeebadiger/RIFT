@@ -31,6 +31,27 @@ review.
 | `services/api/src/investigation/**/*.test.ts` | matching specialist | tests only the adjacent port implementation; shared contract tests remain integration-owned |
 | `docs/m2-architecture.md` | architecture/integration owner | port semantics, sequencing, and integration requirements |
 
+## M3 integration file ownership
+
+The Phase 3 baseline defines additive shared shapes and patch ports only.
+Specialists may implement the reserved files below after the integration
+baseline is accepted. No specialist may edit another specialist's file, the
+shared declarations, or `patch/ports.ts` without integration review.
+
+| File or path | Owner | Specialist boundary |
+| --- | --- | --- |
+| `packages/core/src/index.d.ts` | integration/contracts owner | additive patch values and API response shapes; no provider or diff logic |
+| `packages/core/src/validators.js` | integration/contracts owner | shared runtime validation; no model calls or patch application |
+| `services/api/src/patch/ports.ts` | integration owner | patch requests, capabilities, and untrusted worker ports only |
+| `services/api/src/patch/index.ts` | integration owner | patch boundary exports only |
+| `services/api/src/patch/diff-validator.ts` | diff-validation specialist | contextual diff and path validation; no application or verification |
+| `services/api/src/patch/model-adapter.ts` | model-adapter specialist | provider-neutral bounded transport; no tools, filesystem, or approval |
+| `services/api/src/patch/fake-model.ts` | test/integration owner | deterministic offline model fixture; no real provider behavior |
+| `services/api/src/patch/patch-generator.ts` | patch-generation specialist | proposal validation and assembly; no ranking or verification |
+| `services/api/src/patch/patch-ranker.ts` | ranking specialist | deterministic ordering of validated candidates; no approval |
+| `services/api/src/patch/**/*.test.ts` | matching specialist | adjacent boundary tests; shared contract tests remain integration-owned |
+| `docs/m3-architecture.md` | architecture/integration owner | Phase 3 sequencing, trust rules, and integration requirements |
+
 Shared contract changes are additive and coordinated by the integration owner.
 If a specialist needs a new field, it must propose the field and its validator or
 fixture impact rather than adding a private interface with the same meaning.

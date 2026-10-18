@@ -117,6 +117,13 @@ The M2 adapter ports are integration-owned in
 return untrusted worker output for control-plane validation; specialist
 implementations are reserved by [`docs/ownership.md`](ownership.md).
 
+The M3 patch boundary is intentionally a sibling in
+`services/api/src/patch/ports.ts`. It consumes validated M2 outputs and keeps
+model proposals, contextual diff validation, candidate assembly, ranking, and
+future patch API responses separate. All patch worker results remain untrusted;
+candidate generation cannot apply a patch, run verification, or satisfy human
+approval.
+
 ## Phase 0 decisions
 
 The architecture gate is closed: persistence is local append-only JSONL,

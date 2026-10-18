@@ -108,4 +108,24 @@ describe("shared Phase 0 contract validators", () => {
     };
     expect(validateRecoveryReport(report).ok).toBe(false);
   });
+
+  it("keeps structured expected-invariant details additive to CandidatePatch", () => {
+    const patch = {
+      ...base("CandidatePatch", "patch-1"),
+      sourceHypothesisId: "hypothesis-1",
+      baseRevision: REVISION,
+      diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n",
+      touchedPaths: ["src/checkout.ts"],
+      rationale: "Apply the discount once.",
+      expectedInvariant: "The final total is discounted exactly once.",
+      expectedInvariantDetails: {
+        statement: "The final total is discounted exactly once.",
+        verificationHint: "The checkout regression test passes.",
+      },
+      generatedBy: { actor: "fake-model" },
+    };
+
+    expect(validateCandidatePatch(patch).ok).toBe(true);
+    expect(validateCandidatePatch({ ...patch, expectedInvariantDetails: { statement: "ok", extra: true } }).ok).toBe(false);
+  });
 });
