@@ -271,7 +271,9 @@ export function DockerProcessAdapter(image = "node:20.11.1-bookworm-slim"): Proc
     ];
     if (spec.resourceLimits.maxMemoryBytes !== undefined) args.push(`--memory=${spec.resourceLimits.maxMemoryBytes}`);
     if (spec.resourceLimits.maxCpuMs !== undefined) args.push(`--cpus=${Math.max(spec.resourceLimits.maxCpuMs / 1000, 0.001)}`);
-    for (const [key, value] of Object.entries(spec.environment)) args.push("--env", `${key}=${value}`);
+    // Values travel in the child environment, not in Docker's argv where they
+    // would be visible to host process-list observers.
+    for (const key of Object.keys(spec.environment)) args.push("--env", key);
     return [...args, image, spec.command, ...spec.args];
   }, () => undefined);
 }
@@ -286,7 +288,9 @@ export class CommandExecutor implements CommandExecutorPort {
   private readonly limits: ResourceLimits;
 
   public constructor(options: CommandExecutorOptions = {}) {
-    this.root = options.workspaceRoot ?? process.cwd();
+    // A production Docker run must receive a disposable snapshot directory.
+    // Only injected test adapters may use the current process directory.
+    this.root = options.workspaceRoot ?? (options.processAdapter ? process.cwd() : "");
     this.processes = options.processAdapter ?? DockerProcessAdapter(options.containerImage);
     this.filesystem = options.filesystemAdapter ?? defaultFilesystem;
     this.clock = options.now ?? (() => new Date());
@@ -312,6 +316,8 @@ export class CommandExecutor implements CommandExecutorPort {
     const controller = new AbortController();
     const requestSignal = request.signal;
     const abortRequest = (): void => controller.abort();
+    const abortProcess = (): void => { if (handle) void handle.kill(); };
+    controller.signal.addEventListener("abort", abortProcess);
     if (requestSignal?.aborted) controller.abort();
     else requestSignal?.addEventListener("abort", abortRequest, { once: true });
 
@@ -340,6 +346,7 @@ export class CommandExecutor implements CommandExecutorPort {
             allowedNetworkHosts: networkHosts,
             resourceLimits: limits,
           });
+          if (controller.signal.aborted) void handle.kill();
           const timeout = setTimeout(() => {
             timedOut = true;
             controller.abort();
@@ -395,6 +402,7 @@ export class CommandExecutor implements CommandExecutorPort {
       }
     } finally {
       requestSignal?.removeEventListener("abort", abortRequest);
+      controller.signal.removeEventListener("abort", abortProcess);
       if (handle) {
         try {
           await handle.cleanup();
@@ -458,6 +466,7 @@ export class CommandExecutor implements CommandExecutorPort {
   }
 
   private async resolveWorkingDirectory(workingDirectory: string | undefined): Promise<string> {
+    if (!this.root) throw new Error("filesystem boundary");
     const root = await this.filesystem.realpath(this.root);
     const requested = resolve(root, workingDirectory ?? ".");
     if (!isInside(root, requested)) throw new Error("filesystem boundary");
