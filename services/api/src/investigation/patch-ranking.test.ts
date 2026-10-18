@@ -55,18 +55,24 @@ function evidence(id: string): EvidenceItem {
 }
 
 function patch(id: string, overrides: Partial<CandidatePatch> = {}): CandidatePatch {
-  const { contentHash: _baseHash, ...withoutHash } = {
+  const draft = {
     ...base("CandidatePatch", id),
     sourceHypothesisId: "hypothesis-supported",
     baseRevision: REVISION,
-    diff: `diff --git a/src/checkout.ts b/src/checkout.ts ${id}`,
     touchedPaths: ["src/checkout.ts"],
     rationale: "Apply the discount exactly once at the checkout boundary.",
     expectedInvariant: "The final total contains at most one discount application.",
     generatedBy: { actor: "fake-model" },
     ...overrides,
   } as Record<string, unknown>;
-  return { ...withoutHash, contentHash: computeCandidatePatchContentHash(withoutHash as unknown as Omit<CandidatePatch, "contentHash">) } as CandidatePatch;
+  const paths = draft.touchedPaths as readonly string[];
+  const diff = (draft.diff as string | undefined) ?? paths.map((path) =>
+    `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new ${id}\n`,
+  ).join("");
+  const withoutHash = { ...draft, diff };
+  delete (withoutHash as Record<string, unknown>)["contentHash"];
+  const patchWithoutHash = withoutHash as unknown as Omit<CandidatePatch, "contentHash">;
+  return { ...patchWithoutHash, contentHash: computeCandidatePatchContentHash(patchWithoutHash) };
 }
 
 function input(overrides: Partial<CandidatePatchRankingInput> = {}): CandidatePatchRankingInput {

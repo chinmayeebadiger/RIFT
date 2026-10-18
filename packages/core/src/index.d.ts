@@ -292,6 +292,20 @@ export const MAX_COMMAND_ARGUMENTS: 64;
 export const MAX_COMMAND_TIMEOUT_MS: 1800000;
 export const MAX_EVIDENCE_BYTES: 104857600;
 export const MAX_CONTENT_BYTES: 1048576;
+export const MAX_PATCH_BYTES: 1048576;
+export const MAX_PATCH_DIFF_BYTES: 1048576;
+export const DEFAULT_PROTECTED_PATHS: readonly string[];
+
+export interface CandidatePatchValidationContext {
+  readonly allowedPaths?: readonly string[];
+  readonly protectedPaths?: readonly string[];
+  readonly additionalProtectedPaths?: readonly string[];
+  readonly maxPatchBytes?: number;
+}
+
+export interface CandidatePatchValidationOptions extends CandidatePatchValidationContext {
+  readonly context?: CandidatePatchValidationContext;
+}
 
 export function validateIncidentId(value: unknown): ValidationResult<IncidentId>;
 export function validateManifestId(value: unknown): ValidationResult<ManifestId>;
@@ -311,7 +325,7 @@ export function validateIncidentManifest(value: unknown): ValidationResult<Incid
 export function validateEvidenceItem(value: unknown): ValidationResult<EvidenceItem>;
 export function validateHypothesis(value: unknown): ValidationResult<Hypothesis>;
 export function validateHypothesisSet(value: unknown): ValidationResult<HypothesisSet>;
-export function validateCandidatePatch(value: unknown): ValidationResult<CandidatePatch>;
+export function validateCandidatePatch(value: unknown, options?: CandidatePatchValidationOptions): ValidationResult<CandidatePatch>;
 export function validateVerificationPlan(value: unknown): ValidationResult<VerificationPlan>;
 export function validateVerificationResult(value: unknown): ValidationResult<VerificationResult>;
 export function validateRecoveryReport(value: unknown): ValidationResult<RecoveryReport>;
