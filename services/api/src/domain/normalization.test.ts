@@ -56,7 +56,7 @@ describe("log and stack-trace normalization", () => {
       [
         "2026-10-18T09:59:41.000Z level=warn request_id=fixture-request-001 route=/checkout status=503",
         "2026-10-18T09:59:41.001Z level=error signature=CHECKOUT_RETRY_POOL_EXHAUSTED message=\"checkout retry budget exhausted\"",
-        "2026-10-18T09:59:41.002Z level=info message=\"支付失败 — पुनः प्रयास\"",
+        "2026-10-18T09:59:41.002Z level=info 原因=\"支付失败 — पुनः प्रयास\" message=\"支付失败 — पुनः प्रयास\"",
       ].join("\n"),
       "logs/checkout-api.log",
     );
@@ -69,6 +69,7 @@ describe("log and stack-trace normalization", () => {
       status: "503",
     });
     expect(normalized.lines[2]?.text).toContain("支付失败 — पुनः प्रयास");
+    expect(normalized.lines[2]?.fields["原因"]).toBe("支付失败 — पुनः प्रयास");
     expect(normalized.diagnostics).toEqual([]);
 
     const signature = extractFailureSignature(normalized);

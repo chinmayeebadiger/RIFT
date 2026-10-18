@@ -69,8 +69,8 @@ export interface TimelineEntry {
 
 const TIMESTAMP_TOKEN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\b/u;
 const TIMESTAMP_WITH_ZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/u;
-const KEY_START = /[A-Za-z_]/u;
-const KEY_CHARACTER = /[A-Za-z0-9_.-]/u;
+const KEY_START = /[^\s=]/u;
+const KEY_CHARACTER = /[^\s=]/u;
 const STACK_FRAME = /^\s*at\s+(?:(.+?)\s+\()?(.+):(\d+):(\d+)\)?\s*$/u;
 
 function compareText(left: string, right: string): number {
