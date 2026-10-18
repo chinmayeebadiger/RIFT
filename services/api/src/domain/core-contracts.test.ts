@@ -82,6 +82,14 @@ describe("shared Phase 0 contract validators", () => {
       facts: ["The baseline reproduces the fixture failure."],
       inferences: ["The duplicate discount application is causal."],
       unknowns: ["Production traffic mix was not tested."],
+      evidenceCitations: [],
+      hypotheses: [],
+      patches: [],
+      commands: [],
+      environmentFingerprint: null,
+      baselineResults: [],
+      patchedResults: [],
+      evidenceIds: [],
       approvalRequired: true,
     };
 

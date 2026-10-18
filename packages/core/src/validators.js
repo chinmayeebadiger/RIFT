@@ -405,8 +405,99 @@ export const validateVerificationPlan = (value) => validateSimple(value, "Verifi
 export const validateVerificationResult = (value) => validateSimple(value, "VerificationResult", ["verificationPlanId", "classification", "baselineExitCode", "patchedExitCode", "evidenceIds", "failure"], (record, issues) => {
   idValue(record.verificationPlanId, "$.verificationPlanId", issues); enumValue(record.classification, ["verified", "regressed", "not-reproduced", "inconclusive"], "$.classification", issues); ["baselineExitCode", "patchedExitCode"].forEach((key) => { if (record[key] !== null && !Number.isSafeInteger(record[key])) issue(issues, `$.${key}`, "invalid_integer"); }); uniqueStrings(record.evidenceIds, "$.evidenceIds", issues, idValue); if (hasOwn(record, "failure") && requireRecord(record.failure, "$.failure", issues)) { unknownKeys(record.failure, ["code", "message"], "$.failure", issues); boundedString(record.failure.code, "$.failure.code", issues); boundedString(record.failure.message, "$.failure.message", issues); }
 });
-export const validateRecoveryReport = (value) => validateSimple(value, "RecoveryReport", ["status", "hypothesisSetId", "candidatePatchIds", "verificationResultIds", "facts", "inferences", "unknowns", "approvalRequired"], (record, issues) => {
-  enumValue(record.status, ["verified", "regressed", "not-reproduced", "inconclusive"], "$.status", issues); idValue(record.hypothesisSetId, "$.hypothesisSetId", issues); uniqueStrings(record.candidatePatchIds, "$.candidatePatchIds", issues, idValue); uniqueStrings(record.verificationResultIds, "$.verificationResultIds", issues, idValue); uniqueStrings(record.facts, "$.facts", issues); uniqueStrings(record.inferences, "$.inferences", issues); uniqueStrings(record.unknowns, "$.unknowns", issues); if (record.approvalRequired !== true) issue(issues, "$.approvalRequired", "must_be_true");
+export const validateRepositorySnapshot = (value) => validateSimple(value, "RepositorySnapshot", ["repositoryRevision", "files", "adapter"], (record, issues) => {
+  if (requireRecord(record.repositoryRevision, "$.repositoryRevision", issues)) { unknownKeys(record.repositoryRevision, ["repository", "revision"], "$.repositoryRevision", issues); boundedString(record.repositoryRevision.repository, "$.repositoryRevision.repository", issues); if (typeof record.repositoryRevision.revision !== "string" || !REVISION_PATTERN.test(record.repositoryRevision.revision)) issue(issues, "$.repositoryRevision.revision", "invalid_repository_revision"); }
+  if (arrayValue(record.files, "$.files", issues)) record.files.forEach((file, index) => { const path = `$.files[${index}]`; if (!requireRecord(file, path, issues)) return; unknownKeys(file, ["path", "contentHash", "byteLength"], path, issues); relativePath(file.path, `${path}.path`, issues); hashValue(file.contentHash, `${path}.contentHash`, issues); finiteInteger(file.byteLength, `${path}.byteLength`, issues, 0, MAX_CONTENT_BYTES); });
+  if (requireRecord(record.adapter, "$.adapter", issues)) { unknownKeys(record.adapter, ["name", "version"], "$.adapter", issues); boundedString(record.adapter.name, "$.adapter.name", issues); boundedString(record.adapter.version, "$.adapter.version", issues); }
+});
+export const validateCommandExecution = (value) => validateSimple(value, "CommandExecution", ["snapshotId", "command", "status", "exitCode", "startedAt", "finishedAt", "stdoutEvidenceId", "stderrEvidenceId", "evidenceIds", "failure"], (record, issues) => {
+  idValue(record.snapshotId, "$.snapshotId", issues); validateCommand(record.command, "$.command", issues); enumValue(record.status, ["succeeded", "failed", "timed-out", "cancelled", "blocked"], "$.status", issues); if (record.exitCode !== null && !Number.isSafeInteger(record.exitCode)) issue(issues, "$.exitCode", "invalid_integer"); timestampValue(record.startedAt, "$.startedAt", issues); timestampValue(record.finishedAt, "$.finishedAt", issues); if (hasOwn(record, "stdoutEvidenceId")) idValue(record.stdoutEvidenceId, "$.stdoutEvidenceId", issues); if (hasOwn(record, "stderrEvidenceId")) idValue(record.stderrEvidenceId, "$.stderrEvidenceId", issues); uniqueStrings(record.evidenceIds, "$.evidenceIds", issues, idValue); if (hasOwn(record, "failure") && requireRecord(record.failure, "$.failure", issues)) { unknownKeys(record.failure, ["code", "message"], "$.failure", issues); boundedString(record.failure.code, "$.failure.code", issues); boundedString(record.failure.message, "$.failure.message", issues); }
+});
+function validateEvidenceCitation(value, path, issues) {
+  if (!requireRecord(value, path, issues)) return false;
+  unknownKeys(value, ["evidenceId", "evidenceHash", "relation", "locator", "excerptHash"], path, issues);
+  idValue(required(value, "evidenceId", path, issues), `${path}.evidenceId`, issues);
+  hashValue(required(value, "evidenceHash", path, issues), `${path}.evidenceHash`, issues);
+  enumValue(required(value, "relation", path, issues), ["supports", "contradicts", "context"], `${path}.relation`, issues);
+  boundedString(required(value, "locator", path, issues), `${path}.locator`, issues);
+  if (hasOwn(value, "excerptHash")) hashValue(value.excerptHash, `${path}.excerptHash`, issues);
+  return true;
+}
+
+function validateRecoveryReportValue(value, issues) {
+  unknownKeys(value, ["kind", "schemaVersion", "id", "incidentId", "correlationId", "createdAt", "contentHash", "status", "hypothesisSetId", "candidatePatchIds", "verificationResultIds", "facts", "inferences", "unknowns", "evidenceCitations", "hypotheses", "patches", "commands", "environmentFingerprint", "baselineResults", "patchedResults", "approvalRequired", "evidenceIds"], "$", issues);
+  enumValue(value.kind, ["RecoveryReport"], "$.kind", issues);
+  validateVersionedBase(value, "$", issues);
+  enumValue(value.status, ["running", "verified", "regressed", "not-reproduced", "inconclusive", "cancelled", "policy-denied"], "$.status", issues);
+  idValue(value.hypothesisSetId, "$.hypothesisSetId", issues);
+  uniqueStrings(value.candidatePatchIds, "$.candidatePatchIds", issues, idValue);
+  uniqueStrings(value.verificationResultIds, "$.verificationResultIds", issues, idValue);
+  uniqueStrings(value.facts, "$.facts", issues);
+  uniqueStrings(value.inferences, "$.inferences", issues);
+  uniqueStrings(value.unknowns, "$.unknowns", issues);
+  if (arrayValue(value.evidenceCitations, "$.evidenceCitations", issues)) value.evidenceCitations.forEach((citation, index) => validateEvidenceCitation(citation, `$.evidenceCitations[${index}]`, issues));
+  if (arrayValue(value.hypotheses, "$.hypotheses", issues)) value.hypotheses.forEach((hypothesis, index) => {
+    const path = `$.hypotheses[${index}]`;
+    if (!requireRecord(hypothesis, path, issues)) return;
+    unknownKeys(hypothesis, ["hypothesisId", "statement", "status", "confidence", "citations"], path, issues);
+    idValue(hypothesis.hypothesisId, `${path}.hypothesisId`, issues);
+    boundedString(hypothesis.statement, `${path}.statement`, issues);
+    enumValue(hypothesis.status, ["open", "confirmed", "rejected", "inconclusive"], `${path}.status`, issues);
+    if (typeof hypothesis.confidence !== "number" || !Number.isFinite(hypothesis.confidence) || hypothesis.confidence < 0 || hypothesis.confidence > 1) issue(issues, `${path}.confidence`, "invalid_number");
+    if (arrayValue(hypothesis.citations, `${path}.citations`, issues)) hypothesis.citations.forEach((citation, citationIndex) => validateEvidenceCitation(citation, `${path}.citations[${citationIndex}]`, issues));
+  });
+  if (arrayValue(value.patches, "$.patches", issues)) value.patches.forEach((patch, index) => {
+    const path = `$.patches[${index}]`;
+    if (!requireRecord(patch, path, issues)) return;
+    unknownKeys(patch, ["candidatePatchId", "sourceHypothesisId", "touchedPaths", "rationale", "expectedInvariant"], path, issues);
+    idValue(patch.candidatePatchId, `${path}.candidatePatchId`, issues);
+    idValue(patch.sourceHypothesisId, `${path}.sourceHypothesisId`, issues);
+    uniqueStrings(patch.touchedPaths, `${path}.touchedPaths`, issues, relativePath, true);
+    boundedString(patch.rationale, `${path}.rationale`, issues);
+    boundedString(patch.expectedInvariant, `${path}.expectedInvariant`, issues);
+  });
+  if (arrayValue(value.commands, "$.commands", issues)) value.commands.forEach((command, index) => {
+    const path = `$.commands[${index}]`;
+    if (!requireRecord(command, path, issues)) return;
+    unknownKeys(command, ["executionId", "command", "status", "exitCode", "evidenceIds"], path, issues);
+    idValue(command.executionId, `${path}.executionId`, issues);
+    validateCommand(command.command, `${path}.command`, issues);
+    enumValue(command.status, ["succeeded", "failed", "timed-out", "cancelled", "blocked"], `${path}.status`, issues);
+    if (command.exitCode !== null && !Number.isSafeInteger(command.exitCode)) issue(issues, `${path}.exitCode`, "invalid_integer");
+    uniqueStrings(command.evidenceIds, `${path}.evidenceIds`, issues, idValue);
+  });
+  if (value.environmentFingerprint !== null && requireRecord(value.environmentFingerprint, "$.environmentFingerprint", issues)) {
+    unknownKeys(value.environmentFingerprint, ["snapshotId", "repositoryRevision", "adapter"], "$.environmentFingerprint", issues);
+    idValue(value.environmentFingerprint.snapshotId, "$.environmentFingerprint.snapshotId", issues);
+    if (requireRecord(value.environmentFingerprint.repositoryRevision, "$.environmentFingerprint.repositoryRevision", issues)) {
+      unknownKeys(value.environmentFingerprint.repositoryRevision, ["repository", "revision"], "$.environmentFingerprint.repositoryRevision", issues);
+      boundedString(value.environmentFingerprint.repositoryRevision.repository, "$.environmentFingerprint.repositoryRevision.repository", issues);
+      if (typeof value.environmentFingerprint.repositoryRevision.revision !== "string" || !REVISION_PATTERN.test(value.environmentFingerprint.repositoryRevision.revision)) issue(issues, "$.environmentFingerprint.repositoryRevision.revision", "invalid_repository_revision");
+    }
+    if (hasOwn(value.environmentFingerprint, "adapter") && requireRecord(value.environmentFingerprint.adapter, "$.environmentFingerprint.adapter", issues)) {
+      unknownKeys(value.environmentFingerprint.adapter, ["name", "version"], "$.environmentFingerprint.adapter", issues);
+      boundedString(value.environmentFingerprint.adapter.name, "$.environmentFingerprint.adapter.name", issues);
+      boundedString(value.environmentFingerprint.adapter.version, "$.environmentFingerprint.adapter.version", issues);
+    }
+  } else if (value.environmentFingerprint !== null) issue(issues, "$.environmentFingerprint", "invalid_type");
+  ["baselineResults", "patchedResults"].forEach((key) => {
+    if (!arrayValue(value[key], `$.${key}`, issues)) return;
+    value[key].forEach((result, index) => {
+      const path = `$.${key}[${index}]`;
+      if (!requireRecord(result, path, issues)) return;
+      unknownKeys(result, ["verificationResultId", "exitCode", "evidenceIds"], path, issues);
+      idValue(result.verificationResultId, `${path}.verificationResultId`, issues);
+      if (result.exitCode !== null && !Number.isSafeInteger(result.exitCode)) issue(issues, `${path}.exitCode`, "invalid_integer");
+      uniqueStrings(result.evidenceIds, `${path}.evidenceIds`, issues, idValue);
+    });
+  });
+  if (value.approvalRequired !== true) issue(issues, "$.approvalRequired", "must_be_true");
+  uniqueStrings(value.evidenceIds, "$.evidenceIds", issues, idValue);
+}
+export const validateRecoveryReport = (value) => validateContract(value, validateRecoveryReportValue);
+
+export const validateInvestigationResult = (value) => validateSimple(value, "InvestigationResult", ["snapshotId", "commandExecutionIds", "logNormalizationIds", "timelineId", "hypothesisSetId", "hypothesisEvidence", "evidenceIds", "status", "facts", "inferences", "unknowns", "failure"], (record, issues) => {
+  idValue(record.snapshotId, "$.snapshotId", issues); uniqueStrings(record.commandExecutionIds, "$.commandExecutionIds", issues, idValue); uniqueStrings(record.logNormalizationIds, "$.logNormalizationIds", issues, idValue); idValue(record.timelineId, "$.timelineId", issues); idValue(record.hypothesisSetId, "$.hypothesisSetId", issues); if (arrayValue(record.hypothesisEvidence, "$.hypothesisEvidence", issues)) record.hypothesisEvidence.forEach((item, index) => { if (!requireRecord(item, `$.hypothesisEvidence[${index}]`, issues)) return; unknownKeys(item, ["hypothesisId", "citations"], `$.hypothesisEvidence[${index}]`, issues); idValue(item.hypothesisId, `$.hypothesisEvidence[${index}].hypothesisId`, issues); if (arrayValue(item.citations, `$.hypothesisEvidence[${index}].citations`, issues)) item.citations.forEach((citation, citationIndex) => { const path = `$.hypothesisEvidence[${index}].citations[${citationIndex}]`; if (!requireRecord(citation, path, issues)) return; unknownKeys(citation, ["evidenceId", "evidenceHash", "relation", "locator", "excerptHash"], path, issues); idValue(citation.evidenceId, `${path}.evidenceId`, issues); hashValue(citation.evidenceHash, `${path}.evidenceHash`, issues); enumValue(citation.relation, ["supports", "contradicts", "context"], `${path}.relation`, issues); boundedString(citation.locator, `${path}.locator`, issues); if (hasOwn(citation, "excerptHash")) hashValue(citation.excerptHash, `${path}.excerptHash`, issues); }); }); uniqueStrings(record.evidenceIds, "$.evidenceIds", issues, idValue); enumValue(record.status, ["completed", "inconclusive", "failed"], "$.status", issues); uniqueStrings(record.facts, "$.facts", issues); uniqueStrings(record.inferences, "$.inferences", issues); uniqueStrings(record.unknowns, "$.unknowns", issues); if (hasOwn(record, "failure") && requireRecord(record.failure, "$.failure", issues)) { unknownKeys(record.failure, ["code", "message"], "$.failure", issues); boundedString(record.failure.code, "$.failure.code", issues); boundedString(record.failure.message, "$.failure.message", issues); }
 });
 
 export const isIncidentId = (value) => validateIncidentId(value).ok;

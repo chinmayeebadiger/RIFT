@@ -214,7 +214,38 @@ export interface VerificationResult extends VersionedContract {
   readonly failure?: { readonly code: string; readonly message: string };
 }
 
-export type RecoveryReportStatus = VerificationClassification;
+export type RecoveryReportStatus = VerificationClassification | "running" | "cancelled" | "policy-denied";
+export interface RecoveryReportHypothesis {
+  readonly hypothesisId: HypothesisId;
+  readonly statement: string;
+  readonly status: HypothesisStatus;
+  readonly confidence: number;
+  readonly citations: readonly EvidenceCitation[];
+}
+export interface RecoveryReportPatch {
+  readonly candidatePatchId: CandidatePatchId;
+  readonly sourceHypothesisId: HypothesisId;
+  readonly touchedPaths: readonly string[];
+  readonly rationale: string;
+  readonly expectedInvariant: string;
+}
+export interface RecoveryReportCommand {
+  readonly executionId: CommandExecutionId;
+  readonly command: CommandSpec;
+  readonly status: CommandExecutionStatus;
+  readonly exitCode: number | null;
+  readonly evidenceIds: readonly EvidenceId[];
+}
+export interface RecoveryReportEnvironmentFingerprint {
+  readonly snapshotId: RepositorySnapshotId;
+  readonly repositoryRevision: RepositoryRevision;
+  readonly adapter?: { readonly name: string; readonly version: string };
+}
+export interface RecoveryReportResult {
+  readonly verificationResultId: VerificationResultId;
+  readonly exitCode: number | null;
+  readonly evidenceIds: readonly EvidenceId[];
+}
 export interface RecoveryReport extends VersionedContract {
   readonly kind: "RecoveryReport";
   readonly status: RecoveryReportStatus;
@@ -224,7 +255,15 @@ export interface RecoveryReport extends VersionedContract {
   readonly facts: readonly string[];
   readonly inferences: readonly string[];
   readonly unknowns: readonly string[];
+  readonly evidenceCitations: readonly EvidenceCitation[];
+  readonly hypotheses: readonly RecoveryReportHypothesis[];
+  readonly patches: readonly RecoveryReportPatch[];
+  readonly commands: readonly RecoveryReportCommand[];
+  readonly environmentFingerprint: RecoveryReportEnvironmentFingerprint | null;
+  readonly baselineResults: readonly RecoveryReportResult[];
+  readonly patchedResults: readonly RecoveryReportResult[];
   readonly approvalRequired: true;
+  readonly evidenceIds: readonly EvidenceId[];
 }
 
 export type AuditActorKind = "system" | "human" | "worker" | "model";
@@ -383,7 +422,10 @@ export function validateHypothesisSet(value: unknown): ValidationResult<Hypothes
 export function validateCandidatePatch(value: unknown): ValidationResult<CandidatePatch>;
 export function validateVerificationPlan(value: unknown): ValidationResult<VerificationPlan>;
 export function validateVerificationResult(value: unknown): ValidationResult<VerificationResult>;
+export function validateRepositorySnapshot(value: unknown): ValidationResult<RepositorySnapshot>;
+export function validateCommandExecution(value: unknown): ValidationResult<CommandExecution>;
 export function validateRecoveryReport(value: unknown): ValidationResult<RecoveryReport>;
+export function validateInvestigationResult(value: unknown): ValidationResult<InvestigationResult>;
 export function validateAuditEvent(value: unknown): ValidationResult<AuditEvent>;
 export function isIncidentId(value: unknown): value is IncidentId;
 export function isManifestId(value: unknown): value is ManifestId;
