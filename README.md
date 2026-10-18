@@ -9,10 +9,12 @@ report.
 This repository contains the project foundation, the Phase 0 architecture
 contracts, the M1 intake implementation,
 and a deliberately broken demo storefront. The dashboard loads the typed
-in-memory incident list and incident details from the local API. The API also
-validates and hashes untrusted incident manifests and imports them as
-append-only evidence; autonomous investigation, patch execution, and
-verification data are not enabled yet. The storefront in `demo/` is a safe
+in-memory incident list, incident details, hypotheses, and candidate patches
+from the local API. The API also validates and hashes untrusted incident
+manifests and imports them as append-only evidence; sandbox verification, patch
+execution, and production actions are not enabled yet. A candidate patch is
+review-ready only when it is returned by the patch API; it is never labelled
+verified without a `VerificationResult`. The storefront in `demo/` is a safe
 repair target for later investigate, reproduce, patch, and verify work without
 external services or credentials.
 
@@ -89,6 +91,11 @@ The API exposes:
 - `GET http://localhost:4000/health`
 - `GET http://localhost:4000/api/incidents`
 - `GET http://localhost:4000/api/incidents/RIFT-042`
+- `GET http://localhost:4000/api/incidents/RIFT-042/hypotheses` — returns the
+  validated ranked `HypothesisSet` for the incident.
+- `GET http://localhost:4000/api/incidents/RIFT-042/patches` — returns a
+  JSON array of validated `CandidatePatch` records. The endpoint exposes
+  proposals only; it does not apply or verify them.
 - `POST http://localhost:4000/api/incidents/intake` — accepts a versioned JSON
   incident manifest and returns its deterministic content hash and evidence
   record. Invalid, oversized, unauthorized, unsafe, or secret-bearing input
