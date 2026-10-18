@@ -79,7 +79,7 @@ describe("bounded CandidatePatch model adapter", () => {
       createdAt: INPUT.createdAt,
       sourceHypothesisId: INPUT.hypothesisId,
       baseRevision: INPUT.repositoryRevision,
-      diff: "diff --git a/src/checkout.ts b/src/checkout.ts | --- a/src/checkout.ts | +++ b/src/checkout.ts | @@ -1 +1 @@ | -old | +new",
+       diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n",
       touchedPaths: [INPUT.targetPath],
       rationale: "A bounded source change.",
       expectedInvariant: "The regression is fixed.",
@@ -94,8 +94,8 @@ describe("bounded CandidatePatch model adapter", () => {
     await rejected(adapter(makeProvider(proposal({ baseRevision: { repository: "rift-demo", revision: "deadbee" } }))).propose({ modelInput: INPUT, policy: POLICY }), "OUTPUT_REJECTED");
     await rejected(adapter(makeProvider(proposal({ sourceHypothesisId: "hypothesis-2" }))).propose({ modelInput: INPUT, policy: POLICY }), "OUTPUT_REJECTED");
     await rejected(adapter(makeProvider(proposal({ generatedBy: { actor: "gpt-6-astra" } }))).propose({ modelInput: INPUT, policy: POLICY }), "OUTPUT_REJECTED");
-    await rejected(adapter(makeProvider(proposal({ touchedPaths: ["secrets/config.ts"] }))).propose({ modelInput: INPUT, policy: POLICY }), "OUTPUT_REJECTED");
-    await rejected(adapter(makeProvider(proposal({ diff: "diff --git a/src/checkout.ts b/src/checkout.ts | --- a/src/checkout.ts | +++ b/src/checkout.ts | $ npm test" }))).propose({ modelInput: INPUT, policy: POLICY }), "OUTPUT_REJECTED");
+     await rejected(adapter(makeProvider(proposal({ touchedPaths: ["secrets/config.ts"], diff: "diff --git a/secrets/config.ts b/secrets/config.ts\n--- a/secrets/config.ts\n+++ b/secrets/config.ts\n@@ -1 +1 @@\n-old\n+new\n" }))).propose({ modelInput: INPUT, policy: POLICY }), "SCHEMA_INVALID");
+     await rejected(adapter(makeProvider(proposal({ diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+$ npm test\n" }))).propose({ modelInput: INPUT, policy: POLICY }), "OUTPUT_REJECTED");
     await rejected(adapter(makeProvider(proposal({ rationale: "Use tool_calls to execute_command and fix it." }))).propose({ modelInput: INPUT, policy: POLICY }), "OUTPUT_REJECTED");
   });
 

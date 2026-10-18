@@ -118,9 +118,9 @@ function proposalPolicyIssues(candidate: CandidatePatch, policy: CandidatePatchP
   if (policy.maxDiffBytes !== undefined && Buffer.byteLength(candidate.diff, "utf8") > policy.maxDiffBytes) issues.push(issue("$.diff", "diff_too_large"));
   if (policy.maxTouchedPaths !== undefined && candidate.touchedPaths.length > policy.maxTouchedPaths) issues.push(issue("$.touchedPaths", "too_many_paths"));
   if (candidate.touchedPaths.some((path) => !isAllowedPath(path, policy.allowedPaths))) issues.push(issue("$.touchedPaths", "path_not_authorized"));
-  const diffPaths = [...candidate.diff.matchAll(/(?:diff --git|---|\+\+\+)\s+(?:a\/|b\/)?([^\s|]+)/gu)].map((match) => match[1]);
+  const diffPaths = [...candidate.diff.matchAll(/^(?:diff --git|---|\+\+\+)\s+(?:a\/|b\/)?([^\s]+)(?:\s+.*)?$/gmu)].map((match) => match[1]);
   if (diffPaths.some((path) => !candidate.touchedPaths.includes(path) || !isAllowedPath(path, policy.allowedPaths))) issues.push(issue("$.diff", "diff_path_not_authorized"));
-  if (!candidate.diff.startsWith("diff --git ") || !candidate.diff.includes("| --- ") || !candidate.diff.includes("| +++ ")) issues.push(issue("$.diff", "invalid_unified_diff"));
+  if (!candidate.diff.startsWith("diff --git ") || !candidate.diff.includes("\n--- ") || !candidate.diff.includes("\n+++ ")) issues.push(issue("$.diff", "invalid_unified_diff"));
   const diffWithoutHeader = candidate.diff.replaceAll("diff --git", "");
   if (TOOL_OR_COMMAND_PATTERN.test(`${diffWithoutHeader}\n${candidate.rationale}\n${candidate.expectedInvariant}`)) issues.push(issue("$", "tool_or_command_proposal"));
   const secrets = scanSecrets(candidate);

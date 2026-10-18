@@ -35,9 +35,7 @@ export class DeterministicFakeModel implements CandidatePatchProvider {
       createdAt: fixture.createdAt,
       sourceHypothesisId: fixture.hypothesisId,
       baseRevision: fixture.repositoryRevision,
-      // CandidatePatch's bounded string contract intentionally excludes control
-      // characters, so the diff is a single-line, transport-safe representation.
-      diff: `diff --git a/${fixture.targetPath} b/${fixture.targetPath} | --- a/${fixture.targetPath} | +++ b/${fixture.targetPath} | @@ -1,1 +1,1 @@ | -Rift candidate for ${fixture.hypothesisId} | +Rift candidate for ${fixture.hypothesisId} (deterministic fake)`,
+      diff: `diff --git a/${fixture.targetPath} b/${fixture.targetPath}\n--- a/${fixture.targetPath}\n+++ b/${fixture.targetPath}\n@@ -1,1 +1,1 @@\n-Rift candidate for ${fixture.hypothesisId}\n+Rift candidate for ${fixture.hypothesisId} (deterministic fake)\n`,
       touchedPaths: [fixture.targetPath],
       rationale: `Address hypothesis ${fixture.hypothesisId} in the selected source path.`,
       expectedInvariant: "The selected incident regression no longer occurs.",
