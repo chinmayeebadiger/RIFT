@@ -1,0 +1,3 @@
+2026-10-18T09:59:41.000Z level=warn request_id=fixture-request-001 route=/checkout status=503
+2026-10-18T09:59:41.001Z level=error signature=CHECKOUT_RETRY_POOL_EXHAUSTED message="checkout retry budget exhausted"
+2026-10-18T09:59:41.002Z level=info authorization="Bearer TEST_ONLY_SYNTHETIC_TOKEN" note="fixture value; not a credential"

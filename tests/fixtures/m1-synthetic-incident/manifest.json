@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "IncidentManifest",
+  "id": "m1-fixture-manifest",
+  "incidentId": "RIFT-M1-SYNTHETIC",
+  "correlationId": "m1-fixture-run",
+  "createdAt": "2026-10-18T10:00:00.000Z",
+  "contentHash": "sha256:7f0f93db30724cb79ae92397004fd3ff7f2d8f9bef5668038fbe643bb468b561",
+  "repositoryRevision": {
+    "repository": "rift-demo-storefront",
+    "revision": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "allowedPaths": [
+    "demo/src/domain",
+    "demo/src/server.ts",
+    "demo/package.json"
+  ],
+  "logSources": [
+    {
+      "id": "checkout-api-log",
+      "type": "application-log",
+      "locator": "logs/checkout-api.log"
+    }
+  ],
+  "reproductionCommand": {
+    "command": "node",
+    "args": ["scripts/reproduce-checkout.mjs"],
+    "workingDirectory": "demo"
+  },
+  "testCommands": [
+    {
+      "command": "npm",
+      "args": ["test", "--", "src/domain/shop.test.ts"],
+      "workingDirectory": "demo"
+    }
+  ],
+  "timeWindow": {
+    "start": "2026-10-18T09:55:00.000Z",
+    "end": "2026-10-18T10:00:00.000Z"
+  },
+  "policy": {
+    "networkAccess": "disabled",
+    "allowedCommands": ["node", "npm"],
+    "maxEvidenceBytes": 65536,
+    "redactSecrets": true
+  }
+}

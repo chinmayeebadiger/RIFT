@@ -1,0 +1,22 @@
+{
+  "fixtureId": "m1-synthetic-checkout",
+  "expectedFailureSignature": {
+    "name": "CHECKOUT_RETRY_POOL_EXHAUSTED",
+    "status": 503,
+    "message": "checkout retry budget exhausted"
+  },
+  "expectedIntake": {
+    "acceptedStatus": 201,
+    "retryIsIdempotent": true,
+    "evidenceCountAfterRetry": 1,
+    "manifestHashPattern": "^sha256:[a-f0-9]{64}$",
+    "redactionPlaceholder": "[REDACTED]",
+    "rejections": {
+      "malformedManifest": { "status": 400, "code": "MALFORMED_MANIFEST" },
+      "oversizedManifest": { "status": 413, "code": "MANIFEST_TOO_LARGE" },
+      "oversizedRequest": { "status": 413, "code": "BODY_TOO_LARGE" },
+      "unauthorizedCaller": { "status": 403, "code": "AUTHORIZATION_DENIED" },
+      "unauthorizedPath": { "status": 400, "code": "UNSAFE_PATH" }
+    }
+  }
+}
