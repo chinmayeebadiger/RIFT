@@ -1,4 +1,4 @@
-.PHONY: install dev test test-foundation test-web test-api test-demo demo-regression typecheck build
+.PHONY: install dev test test-foundation test-web test-api test-security test-demo demo-regression typecheck build
 
 install:
 	npm --prefix apps/web ci
@@ -10,7 +10,7 @@ dev:
 		npm --prefix services/api run start & API_PID=$$!; \
 		npm --prefix apps/web run dev
 
-test: test-foundation test-web test-api test-demo
+test: test-foundation test-web test-api test-security test-demo
 
 test-foundation:
 	python3 -m unittest discover -s tests -p 'test_*.py' -v
@@ -20,6 +20,9 @@ test-web:
 
 test-api:
 	npm --prefix services/api test -- --run
+
+test-security:
+	npm --prefix services/api test -- --run src/investigation/command-executor.security.test.ts
 
 test-demo:
 	npm --prefix demo test -- --run src/domain/shop.test.ts src/server.test.ts

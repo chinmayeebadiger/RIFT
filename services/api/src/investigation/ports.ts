@@ -27,6 +27,13 @@ export interface CommandExecutionCapability {
   readonly allowedCommands: readonly string[];
   readonly networkAccess: "disabled" | "allowlisted";
   readonly timeoutMs: number;
+  readonly allowedNetworkHosts?: readonly string[];
+  readonly resourceLimits?: {
+    readonly maxOutputBytes: number;
+    readonly maxProcesses: number;
+    readonly maxMemoryBytes?: number;
+    readonly maxCpuMs?: number;
+  };
 }
 
 export interface InvestigationPortContext {
