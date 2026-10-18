@@ -86,6 +86,7 @@ describe("CommandExecutor security policy", () => {
     };
     const timeoutExecutor = new CommandExecutor({ processAdapter, now: () => new Date("2026-10-18T10:00:00.000Z") });
     const pending = timeoutExecutor.execute(request({ capability: { allowedCommands: ["node"], networkAccess: "disabled", timeoutMs: 1 } }));
+    await vi.waitFor(() => expect(processAdapter.start).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 10));
     resolveCompletion({ exitCode: null, signal: "SIGKILL", stdout: "TOKEN=super-secret", stderr: "secret" });
     await expect(pending).resolves.toMatchObject({ status: "timed-out", failure: { code: "TIMED_OUT" } });
