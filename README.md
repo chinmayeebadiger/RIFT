@@ -6,12 +6,14 @@ forms and ranks causal hypotheses, generates candidate patches, verifies those
 patches in isolated environments, and presents an evidence-backed recovery
 report.
 
-This repository contains the project foundation, a working application
-skeleton, and a deliberately broken demo storefront. The dashboard loads the
-typed in-memory incident list and incident details from the local API; autonomous
-investigation, patch execution, and verification data are not enabled yet. The
-storefront in `demo/` is a safe repair target for testing the full investigate,
-reproduce, patch, and verify loop without external services or credentials.
+This repository contains the project foundation, the M1 intake implementation,
+and a deliberately broken demo storefront. The dashboard loads the typed
+in-memory incident list and incident details from the local API. The API also
+validates and hashes untrusted incident manifests and imports them as
+append-only evidence; autonomous investigation, patch execution, and
+verification data are not enabled yet. The storefront in `demo/` is a safe
+repair target for later investigate, reproduce, patch, and verify work without
+external services or credentials.
 
 ## Project documents
 
@@ -75,11 +77,15 @@ make dev
 `make dev` starts both services. Open <http://localhost:3000> for the dashboard;
 the API listens on port 4000.
 
-The API skeleton exposes:
+The API exposes:
 
 - `GET http://localhost:4000/health`
 - `GET http://localhost:4000/api/incidents`
 - `GET http://localhost:4000/api/incidents/RIFT-042`
+- `POST http://localhost:4000/api/incidents/intake` — accepts a versioned JSON
+  incident manifest and returns its deterministic content hash and evidence
+  record. Invalid, oversized, unauthorized, unsafe, or secret-bearing input
+  returns structured errors with a field path and stable error code.
 
 ### Broken demo website
 
@@ -153,5 +159,7 @@ above until that is added.
 
 ## Status
 
-Skeleton phase. The next implementation step is the domain model and
-incident-evidence manifest described in Milestone 1 of the roadmap.
+M1 intake phase complete: versioned domain contracts, deterministic validation,
+redaction and hashing utilities, local append-only evidence storage, and the
+manifest intake API are implemented. Investigation, patch generation, sandbox
+execution, and recovery reporting remain out of scope for this slice.
