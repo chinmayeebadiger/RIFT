@@ -43,6 +43,29 @@ type, lint, and security checks without requiring network access. CI may run
 additional image and dependency scans. A check that cannot run locally must be
 labelled as such rather than replaced with a no-op.
 
+## Current dashboard checks
+
+The initial dashboard is read-only and consumes the API's incident list and
+detail routes. Until browser automation is introduced, every dashboard change
+should cover:
+
+1. **API-client unit tests:** successful list/detail responses, URL-encoded
+   incident IDs, non-2xx JSON errors, and non-JSON upstream errors.
+2. **API integration tests:** health, list, detail, missing incident, and
+   unsupported method responses.
+3. **Manual browser smoke:** start the API and Next.js app with `make dev`,
+   confirm the list loads, select each incident, reload, and confirm loading,
+   empty, and retryable failure states are understandable.
+4. **Build checks:** `make typecheck` and `make build`, including the Docker
+   build when deployment files change.
+5. **Accessibility/responsive review:** keyboard selection and retry, visible
+   focus states, screen-reader labels, narrow viewport layout, and long text.
+
+The UI currently presents recovery, patch, and verification areas as product
+surface only; those areas must not be treated as proof that autonomous recovery
+has run. When those actions become connected, add end-to-end tests for the
+approval and verification boundaries before enabling them.
+
 ## Repair-target demo
 
 The repository includes an offline Rift Shop under `demo/`. It is intentionally

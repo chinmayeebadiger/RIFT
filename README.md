@@ -7,11 +7,11 @@ patches in isolated environments, and presents an evidence-backed recovery
 report.
 
 This repository contains the project foundation, a working application
-skeleton, and a deliberately broken demo storefront. The current UI uses static
-demo data while the API exposes typed in-memory incident records; autonomous
-investigation and patch execution are not enabled yet. The storefront in
-`demo/` is a safe repair target for testing the full investigate, reproduce,
-patch, and verify loop without external services or credentials.
+skeleton, and a deliberately broken demo storefront. The dashboard loads the
+typed in-memory incident list and incident details from the local API; autonomous
+investigation, patch execution, and verification data are not enabled yet. The
+storefront in `demo/` is a safe repair target for testing the full investigate,
+reproduce, patch, and verify loop without external services or credentials.
 
 ## Project documents
 
@@ -47,10 +47,11 @@ make typecheck
 make build
 ```
 
-`make test` runs the foundation checks, both existing Vitest suites, and the
-demo website smoke/integration suite. After the dependencies have been
-installed, the test commands are deterministic and do not contact external
-services. The demo's repair-target suite is intentionally failing on the
+`make test` runs the foundation checks, the frontend API-client suite, the API
+route suite, and the demo website smoke/integration suite. After the
+dependencies have been installed, the test commands are deterministic and do
+not contact external services. Run `make typecheck` and `make build` before a
+release. The demo's repair-target suite is intentionally failing on the
 baseline so a bug is observable before it is fixed:
 
 ```sh
@@ -125,6 +126,30 @@ docker run --rm -e RIFT_SERVICE=demo -p 4173:4173 rift
 
 Configuration placeholders are documented in `.env.example`. Never commit
 credentials, production logs, source snapshots, or generated incident data.
+
+## What needs testing next
+
+The current implementation is a read-only dashboard, so the highest-value
+checks are:
+
+- frontend loading, empty, API failure, retry, incident selection, and detail
+  rendering states;
+- API health, incident list/detail responses, missing IDs, unsupported methods,
+  and malformed or unavailable upstream responses;
+- timeline and timestamp rendering at the UTC boundary, unknown status/stage
+  values, and very long summaries or repository names;
+- responsive layout and keyboard/screen-reader behavior for incident selection,
+  retry, and navigation controls;
+- end-to-end startup with the API rewrite (`make dev`), plus production build
+  and Docker startup on a clean Linux machine;
+- once recovery actions exist: baseline reproduction, patch authorization,
+  isolation, timeout/cancellation, evidence provenance, verification semantics,
+  and the human approval boundary described in
+  [`docs/testing-strategy.md`](docs/testing-strategy.md).
+
+The current Vitest setup covers the frontend API client and API routes. A real
+browser component/e2e suite is still a follow-up gap; use the manual smoke flow
+above until that is added.
 
 ## Status
 
