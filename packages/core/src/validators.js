@@ -292,7 +292,7 @@ function hashArray(value, path, issues) {
 }
 
 function validateAudit(value, issues) {
-  unknownKeys(value, ["kind", "schemaVersion", "id", "incidentId", "correlationId", "createdAt", "contentHash", "occurredAt", "actor", "action", "policyDecision", "result", "inputHashes", "outputHashes", "failure"], "$", issues);
+  unknownKeys(value, ["kind", "schemaVersion", "id", "incidentId", "correlationId", "createdAt", "contentHash", "occurredAt", "actor", "action", "policyDecision", "result", "inputHashes", "outputHashes", "stage", "attempt", "failure"], "$", issues);
   enumValue(value.kind, ["AuditEvent"], "$.kind", issues);
   validateVersionedBase(value, "$", issues);
   timestampValue(required(value, "occurredAt", "$", issues), "$.occurredAt", issues);
@@ -302,7 +302,7 @@ function validateAudit(value, issues) {
     enumValue(actor.kind, ["system", "human", "worker", "model"], "$.actor.kind", issues);
     boundedString(required(actor, "id", "$.actor", issues), "$.actor.id", issues);
   }
-  enumValue(value.action, ["intake.validate", "evidence.import", "policy.evaluate", "model.call", "sandbox.create", "external.action"], "$.action", issues);
+  enumValue(value.action, ["intake.validate", "evidence.import", "policy.evaluate", "model.call", "sandbox.create", "external.action", "verification.stage", "verification.execute", "verification.patch", "verification.check", "verification.cleanup", "verification.cancel", "verification.retry"], "$.action", issues);
   const policyDecision = required(value, "policyDecision", "$", issues);
   if (requireRecord(policyDecision, "$.policyDecision", issues)) {
     unknownKeys(policyDecision, ["outcome", "policyId", "reasonCode"], "$.policyDecision", issues);
@@ -313,6 +313,8 @@ function validateAudit(value, issues) {
   const validResult = enumValue(value.result, ["succeeded", "failed", "denied"], "$.result", issues);
   hashArray(required(value, "inputHashes", "$", issues), "$.inputHashes", issues);
   hashArray(required(value, "outputHashes", "$", issues), "$.outputHashes", issues);
+  if (hasOwn(value, "stage")) enumValue(value.stage, ["validate", "baseline", "patch", "checks", "classify", "cleanup"], "$.stage", issues);
+  if (hasOwn(value, "attempt")) finiteInteger(value.attempt, "$.attempt", issues, 1, MAX_ARRAY_LENGTH);
   const hasFailure = hasOwn(value, "failure");
   if (hasFailure && requireRecord(value.failure, "$.failure", issues)) {
     unknownKeys(value.failure, ["code"], "$.failure", issues);

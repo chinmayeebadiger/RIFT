@@ -11,8 +11,10 @@ contracts, the M1 intake implementation,
 and a deliberately broken demo storefront. The dashboard loads the typed
 in-memory incident list and incident details from the local API. The API also
 validates and hashes untrusted incident manifests and imports them as
-append-only evidence; autonomous investigation, patch execution, and
-verification data are not enabled yet. The storefront in `demo/` is a safe
+append-only evidence. Phase 4 adds an offline verification control plane that
+runs a baseline before one candidate patch, executes configured checks, records
+correlated audit events, and classifies the result without mutating the user's
+working tree. The storefront in `demo/` is a safe
 repair target for later investigate, reproduce, patch, and verify work without
 external services or credentials.
 
@@ -177,4 +179,10 @@ selection is the only M1 integration caveat. Investigation, patch generation,
 sandbox execution, and recovery reporting remain out of scope for this slice.
 The M2 architecture baseline now fixes additive snapshot, command, normalization,
 timeline, hypothesis-citation, and investigation-result ports; specialist
-implementations and runtime M2 validators remain follow-up work.
+implementations and runtime M2 validators remain follow-up work. Phase 4
+verification orchestration is implemented behind
+`services/api/src/verification`: baseline reproduction is mandatory for
+`verified`, patch application is exactly once, retries are idempotency-keyed and
+bounded, cancellation reaches workers, cleanup always runs, concurrency is
+leased, and every side effect has a correlated audit event. Dashboard
+presentation remains out of scope.
