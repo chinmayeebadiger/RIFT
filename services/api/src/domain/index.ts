@@ -4,4 +4,5 @@ export * from "./hashing.js";
 export * from "./redaction.js";
 export * from "./validators.js";
 export * from "./intake.js";
+export * from "./recovery-data.js";
 export * from "../investigation/index.js";

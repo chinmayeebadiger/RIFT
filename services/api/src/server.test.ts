@@ -74,6 +74,64 @@ describe("Rift API routes", () => {
     expect(incident.timeline).toHaveLength(4);
   });
 
+  it("returns validated hypotheses and review-ready candidate patches for the demo incident", async () => {
+    const hypothesesResponse = await fetch(`${baseUrl}/api/incidents/RIFT-042/hypotheses`);
+    const hypotheses = await hypothesesResponse.json();
+    const patchesResponse = await fetch(`${baseUrl}/api/incidents/RIFT-042/patches`);
+    const patches = await patchesResponse.json();
+
+    expect(hypothesesResponse.status).toBe(200);
+    expect(hypotheses).toMatchObject({
+      kind: "HypothesisSet",
+      schemaVersion: 1,
+      id: "rift-042-hypotheses",
+      incidentId: "RIFT-042",
+      rankingMethod: "confidence-desc",
+    });
+    expect(hypotheses.hypotheses).toHaveLength(2);
+    expect(patchesResponse.status).toBe(200);
+    expect(patches.patches).toHaveLength(2);
+    expect(patches.patches.every((patch: { kind: string; incidentId: string; generatedBy: { actor: string } }) =>
+      patch.kind === "CandidatePatch" && patch.incidentId === "RIFT-042" && patch.generatedBy.actor === "fake-model")).toBe(true);
+    expect(patches.patches.every((patch: Record<string, unknown>) => !Object.hasOwn(patch, "verificationResult"))).toBe(true);
+  });
+
+  it("returns empty validated recovery collections for other known incidents", async () => {
+    const hypothesesResponse = await fetch(`${baseUrl}/api/incidents/RIFT-041/hypotheses`);
+    const hypotheses = await hypothesesResponse.json();
+    const patchesResponse = await fetch(`${baseUrl}/api/incidents/RIFT-041/patches`);
+    const patches = await patchesResponse.json();
+
+    expect(hypothesesResponse.status).toBe(200);
+    expect(hypotheses).toMatchObject({ kind: "HypothesisSet", incidentId: "RIFT-041" });
+    expect(hypotheses.hypotheses).toEqual([]);
+    expect(patchesResponse.status).toBe(200);
+    expect(patches).toEqual({ patches: [] });
+  });
+
+  it("exposes rejected investigation state without presenting a patch", async () => {
+    const hypothesesResponse = await fetch(`${baseUrl}/api/incidents/RIFT-039/hypotheses`);
+    const hypotheses = await hypothesesResponse.json();
+    const patchesResponse = await fetch(`${baseUrl}/api/incidents/RIFT-039/patches`);
+    const patches = await patchesResponse.json();
+
+    expect(hypothesesResponse.status).toBe(200);
+    expect(hypotheses.hypotheses).toHaveLength(1);
+    expect(hypotheses.hypotheses[0].status).toBe("rejected");
+    expect(patchesResponse.status).toBe(200);
+    expect(patches).toEqual({ patches: [] });
+  });
+
+  it("returns the existing missing-incident error for recovery routes", async () => {
+    const hypothesesResponse = await fetch(`${baseUrl}/api/incidents/does-not-exist/hypotheses`);
+    const patchesResponse = await fetch(`${baseUrl}/api/incidents/does-not-exist/patches`);
+
+    expect(hypothesesResponse.status).toBe(404);
+    expect(await hypothesesResponse.json()).toEqual({ error: "Incident not found", id: "does-not-exist" });
+    expect(patchesResponse.status).toBe(404);
+    expect(await patchesResponse.json()).toEqual({ error: "Incident not found", id: "does-not-exist" });
+  });
+
   it("returns useful errors for missing incidents and unsupported methods", async () => {
     const missingResponse = await fetch(`${baseUrl}/api/incidents/does-not-exist`);
     const missingBody = await missingResponse.json();

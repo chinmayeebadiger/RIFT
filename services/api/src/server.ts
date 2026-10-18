@@ -3,6 +3,7 @@ import { findIncident, demoIncidents } from "./domain/incidents.js";
 import { InMemoryEvidenceStore } from "./domain/evidence-store.js";
 import type { EvidenceStore } from "./domain/evidence-store.js";
 import { intakeIncidentManifest, ManifestValidationError, MAX_MANIFEST_BYTES } from "./domain/intake.js";
+import { findRecoveryData } from "./domain/recovery-data.js";
 
 const SERVICE_NAME = "rift-api";
 const SERVICE_VERSION = "0.1.0";
@@ -91,6 +92,32 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, evide
 
   if (requestUrl.pathname === "/api/incidents") {
     sendJson(response, 200, demoIncidents);
+    return;
+  }
+
+  const hypothesesPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/hypotheses$/);
+  if (hypothesesPath) {
+    const incidentId = decodeURIComponent(hypothesesPath[1]);
+    const incident = findIncident(incidentId);
+    if (!incident) {
+      sendJson(response, 404, { error: "Incident not found", id: incidentId });
+      return;
+    }
+
+    sendJson(response, 200, findRecoveryData(incidentId)?.hypothesisSet);
+    return;
+  }
+
+  const patchesPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/patches$/);
+  if (patchesPath) {
+    const incidentId = decodeURIComponent(patchesPath[1]);
+    const incident = findIncident(incidentId);
+    if (!incident) {
+      sendJson(response, 404, { error: "Incident not found", id: incidentId });
+      return;
+    }
+
+    sendJson(response, 200, { patches: findRecoveryData(incidentId)?.patches ?? [] });
     return;
   }
 
