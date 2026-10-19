@@ -13,3 +13,7 @@ build/
 reports/
 artifacts/
 .DS_Store
+
+# Local generated product guide. The existing design documents in docs/ remain
+# versioned; this generated implementation guide is intentionally private.
+/docs/PRODUCT_GUIDE.md
