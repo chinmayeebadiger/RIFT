@@ -122,8 +122,76 @@ export interface CandidatePatch extends VersionedContract {
   readonly touchedPaths: readonly string[];
   readonly rationale: string;
   readonly expectedInvariant: string;
+  /** Optional structured detail; the required statement remains the v1 field. */
+  readonly expectedInvariantDetails?: ExpectedInvariant;
   readonly generatedBy: { readonly actor: "fake-model" | "gpt-6-astra" | "human"; readonly model?: string };
 }
+
+/** A reviewable invariant statement carried alongside a candidate patch. */
+export interface ExpectedInvariant {
+  readonly statement: string;
+  readonly verificationHint?: string;
+}
+
+export type DiffValidationIssueCode =
+  | "malformed_diff"
+  | "empty_diff"
+  | "path_not_allowed"
+  | "path_mismatch"
+  | "unsupported_change"
+  | "base_revision_mismatch"
+  | "diff_too_large";
+
+export interface DiffValidationIssue extends ValidationIssue {
+  readonly code: DiffValidationIssueCode;
+  readonly message?: string;
+}
+
+export interface DiffValidationResult {
+  readonly valid: boolean;
+  readonly touchedPaths: readonly string[];
+  readonly issues: readonly DiffValidationIssue[];
+}
+
+export interface PatchModelProposal {
+  readonly candidatePatches: readonly CandidatePatch[];
+}
+
+export interface PatchRankingEntry {
+  readonly candidatePatchId: CandidatePatchId;
+  readonly rank: number;
+  readonly score: number;
+  readonly rationale: string;
+}
+
+export interface PatchRanking {
+  readonly method: string;
+  readonly entries: readonly PatchRankingEntry[];
+}
+
+export type PatchGenerationStatus = "generated" | "rejected" | "inconclusive";
+export interface PatchGenerationResponse extends VersionedContract {
+  readonly kind: "PatchGenerationResponse";
+  readonly hypothesisSetId: HypothesisSetId;
+  readonly candidatePatches: readonly CandidatePatch[];
+  readonly ranking: PatchRanking | null;
+  readonly status: PatchGenerationStatus;
+  readonly validationIssues: readonly DiffValidationIssue[];
+}
+
+export interface PatchApiErrorIssue {
+  readonly path?: string;
+  readonly code: string;
+  readonly message?: string;
+}
+
+export interface PatchApiErrorResponse {
+  readonly error: string;
+  readonly code: string;
+  readonly errors: readonly PatchApiErrorIssue[];
+}
+
+export type PatchApiResponse = PatchGenerationResponse | PatchApiErrorResponse;
 
 export interface VerificationPlan extends VersionedContract {
   readonly kind: "VerificationPlan";
@@ -143,10 +211,44 @@ export interface VerificationResult extends VersionedContract {
   readonly baselineExitCode: number | null;
   readonly patchedExitCode: number | null;
   readonly evidenceIds: readonly EvidenceId[];
+  /** Additive provenance partition; never conflate the two execution sides. */
+  readonly baselineEvidenceIds?: readonly EvidenceId[];
+  readonly patchedEvidenceIds?: readonly EvidenceId[];
   readonly failure?: { readonly code: string; readonly message: string };
 }
 
-export type RecoveryReportStatus = VerificationClassification;
+export type RecoveryReportStatus = VerificationClassification | "running" | "cancelled" | "policy-denied";
+export interface RecoveryReportHypothesis {
+  readonly hypothesisId: HypothesisId;
+  readonly statement: string;
+  readonly status: HypothesisStatus;
+  readonly confidence: number;
+  readonly citations: readonly EvidenceCitation[];
+}
+export interface RecoveryReportPatch {
+  readonly candidatePatchId: CandidatePatchId;
+  readonly sourceHypothesisId: HypothesisId;
+  readonly touchedPaths: readonly string[];
+  readonly rationale: string;
+  readonly expectedInvariant: string;
+}
+export interface RecoveryReportCommand {
+  readonly executionId: CommandExecutionId;
+  readonly command: CommandSpec;
+  readonly status: CommandExecutionStatus;
+  readonly exitCode: number | null;
+  readonly evidenceIds: readonly EvidenceId[];
+}
+export interface RecoveryReportEnvironmentFingerprint {
+  readonly snapshotId: RepositorySnapshotId;
+  readonly repositoryRevision: RepositoryRevision;
+  readonly adapter?: { readonly name: string; readonly version: string };
+}
+export interface RecoveryReportResult {
+  readonly verificationResultId: VerificationResultId;
+  readonly exitCode: number | null;
+  readonly evidenceIds: readonly EvidenceId[];
+}
 export interface RecoveryReport extends VersionedContract {
   readonly kind: "RecoveryReport";
   readonly status: RecoveryReportStatus;
@@ -156,11 +258,33 @@ export interface RecoveryReport extends VersionedContract {
   readonly facts: readonly string[];
   readonly inferences: readonly string[];
   readonly unknowns: readonly string[];
+  readonly evidenceCitations: readonly EvidenceCitation[];
+  readonly hypotheses: readonly RecoveryReportHypothesis[];
+  readonly patches: readonly RecoveryReportPatch[];
+  readonly commands: readonly RecoveryReportCommand[];
+  readonly environmentFingerprint: RecoveryReportEnvironmentFingerprint | null;
+  readonly baselineResults: readonly RecoveryReportResult[];
+  readonly patchedResults: readonly RecoveryReportResult[];
   readonly approvalRequired: true;
+  readonly evidenceIds: readonly EvidenceId[];
 }
 
 export type AuditActorKind = "system" | "human" | "worker" | "model";
-export type AuditAction = "intake.validate" | "evidence.import" | "policy.evaluate" | "model.call" | "sandbox.create" | "external.action";
+export type AuditAction =
+  | "intake.validate"
+  | "evidence.import"
+  | "policy.evaluate"
+  | "model.call"
+  | "sandbox.create"
+  | "external.action"
+  | "verification.stage"
+  | "verification.execute"
+  | "verification.patch"
+  | "verification.check"
+  | "verification.cleanup"
+  | "verification.cancel"
+  | "verification.retry";
+export type VerificationAuditStage = "validate" | "baseline" | "patch" | "checks" | "classify" | "cleanup";
 export type AuditResult = "succeeded" | "failed" | "denied";
 export interface AuditEvent extends VersionedContract {
   readonly kind: "AuditEvent";
@@ -171,6 +295,8 @@ export interface AuditEvent extends VersionedContract {
   readonly result: AuditResult;
   readonly inputHashes: readonly string[];
   readonly outputHashes: readonly string[];
+  readonly stage?: VerificationAuditStage;
+  readonly attempt?: number;
   readonly failure?: { readonly code: string };
 }
 
@@ -292,6 +418,21 @@ export const MAX_COMMAND_ARGUMENTS: 64;
 export const MAX_COMMAND_TIMEOUT_MS: 1800000;
 export const MAX_EVIDENCE_BYTES: 104857600;
 export const MAX_CONTENT_BYTES: 1048576;
+export const MAX_DIFF_BYTES: 1048576;
+export const MAX_PATCH_BYTES: 1048576;
+export const MAX_PATCH_DIFF_BYTES: 1048576;
+export const DEFAULT_PROTECTED_PATHS: readonly string[];
+
+export interface CandidatePatchValidationContext {
+  readonly allowedPaths?: readonly string[];
+  readonly protectedPaths?: readonly string[];
+  readonly additionalProtectedPaths?: readonly string[];
+  readonly maxPatchBytes?: number;
+}
+
+export interface CandidatePatchValidationOptions extends CandidatePatchValidationContext {
+  readonly context?: CandidatePatchValidationContext;
+}
 
 export function validateIncidentId(value: unknown): ValidationResult<IncidentId>;
 export function validateManifestId(value: unknown): ValidationResult<ManifestId>;
@@ -311,10 +452,13 @@ export function validateIncidentManifest(value: unknown): ValidationResult<Incid
 export function validateEvidenceItem(value: unknown): ValidationResult<EvidenceItem>;
 export function validateHypothesis(value: unknown): ValidationResult<Hypothesis>;
 export function validateHypothesisSet(value: unknown): ValidationResult<HypothesisSet>;
-export function validateCandidatePatch(value: unknown): ValidationResult<CandidatePatch>;
+export function validateCandidatePatch(value: unknown, options?: CandidatePatchValidationOptions): ValidationResult<CandidatePatch>;
 export function validateVerificationPlan(value: unknown): ValidationResult<VerificationPlan>;
 export function validateVerificationResult(value: unknown): ValidationResult<VerificationResult>;
+export function validateRepositorySnapshot(value: unknown): ValidationResult<RepositorySnapshot>;
+export function validateCommandExecution(value: unknown): ValidationResult<CommandExecution>;
 export function validateRecoveryReport(value: unknown): ValidationResult<RecoveryReport>;
+export function validateInvestigationResult(value: unknown): ValidationResult<InvestigationResult>;
 export function validateAuditEvent(value: unknown): ValidationResult<AuditEvent>;
 export function isIncidentId(value: unknown): value is IncidentId;
 export function isManifestId(value: unknown): value is ManifestId;

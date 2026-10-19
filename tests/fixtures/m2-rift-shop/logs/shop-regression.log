@@ -1,0 +1,8 @@
+command=npm --prefix demo test -- --run src/domain/shop.regression.test.ts
+working_directory=.
+exit_code=1
+test_files=1
+tests=4
+failed=4
+failure=RIFT_SHOP_REGRESSION_FAILURE
+assertions=quantity_zero,discount_applied_twice,expired_coupon_accepted,case_sensitive_search

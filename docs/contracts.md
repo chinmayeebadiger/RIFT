@@ -39,6 +39,20 @@ precision (`YYYY-MM-DDTHH:mm:ss.sssZ`). IDs are bounded, non-empty ASCII tokens.
 | `InvestigationTimeline` | deterministic ordered observations | timeline builder | hypothesis/report |
 | `InvestigationResult` | evidence-backed M2 investigation outcome | investigation assembly | report/control plane |
 
+Phase 3 adds the following additive value and transport shapes without changing
+the schema version: `ExpectedInvariant`, `DiffValidationIssue`,
+`DiffValidationResult`, `PatchModelProposal`, `PatchRankingEntry`,
+`PatchRanking`, `PatchGenerationResponse`, and `PatchApiErrorResponse`.
+`CandidatePatch.expectedInvariantDetails` is optional; its existing required
+`expectedInvariant` statement remains the version-1 compatibility field.
+
+These shapes are prepared for the patch boundary and are not persisted or
+served by an API route in the architecture baseline. Before that happens,
+shared runtime validators and JSON-round-trip fixtures must be added. Contextual
+diff policy (base revision, allowed paths, and derived touched paths) belongs
+to the `DiffValidator` port rather than the structural `CandidatePatch`
+validator.
+
 ## Versioning strategy
 
 1. A validator rejects an unknown `schemaVersion`; it never guesses.

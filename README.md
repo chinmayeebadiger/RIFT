@@ -7,14 +7,17 @@ patches in isolated environments, and presents an evidence-backed recovery
 report.
 
 This repository contains the project foundation, the Phase 0 architecture
-contracts, the M1 intake implementation,
-and a deliberately broken demo storefront. The dashboard loads the typed
-in-memory incident list and incident details from the local API. The API also
-validates and hashes untrusted incident manifests and imports them as
-append-only evidence; autonomous investigation, patch execution, and
-verification data are not enabled yet. The storefront in `demo/` is a safe
-repair target for later investigate, reproduce, patch, and verify work without
-external services or credentials.
+contracts, the M1 intake implementation, the Phase 2 investigation workers,
+the Phase 3 patch/model boundaries, the Phase 4 isolated verification and
+report/approval flow, and a deliberately broken demo storefront. The dashboard
+loads the typed in-memory incident list, incident details, and recovery
+report/approval state from the local API. Recovery reports are assembled only
+from validated worker output and retain separate facts, inferences, unknowns,
+citations, hypotheses, patches, commands, environment fingerprints, baseline
+results, patched results, and final classification. The approval endpoint
+records a human decision only; it never applies a patch, pushes a branch,
+deploys, or calls production. The storefront in `demo/` is a safe repair target
+for the offline integrated pipeline without external services or credentials.
 
 ## Project documents
 
@@ -71,6 +74,65 @@ It contains four deterministic regression tests, one for each seeded defect.
 Run it again after a repair; it should become green without changing the test
 expectations.
 
+### Integrated recovery pipeline
+
+The composition API in `services/api/src/pipeline/` wires the complete bounded
+flow:
+
+```text
+incident manifest intake
+  -> append-only evidence
+  -> pinned repository snapshot
+  -> baseline reproduction (required)
+  -> log/stack normalization and timeline
+  -> cited hypotheses
+  -> bounded candidate patch proposal and ranking
+  -> disposable isolated verification
+  -> evidence-backed recovery report
+  -> pending human approval intent
+```
+
+`RecoveryPipeline` accepts explicit repository, command, model, runner, evidence,
+and report-store capabilities. It does not infer authority from the process,
+modify the caller's checkout, deploy a patch, or equate a green patched check
+with approval. Candidate generation and isolated verification are skipped when
+the actual baseline does not reproduce the configured failure signature.
+
+For a local MVP, start the API in explicit demo mode:
+
+```sh
+RIFT_MVP_MODE=demo npm --prefix services/api run start
+```
+
+Then submit a server-owned demo recovery request:
+
+```text
+POST /api/incidents/:incidentId/recovery
+```
+
+The request accepts only `manifest`, `evidence`, and
+`expectedBaselineFailure`. Repository paths, command capabilities, model
+authority, runner image, and network policy are fixed by the server-side demo
+composition. The response includes the generated incident, hypotheses,
+candidate patches, report, and pending approval state. The API then serves the
+same artifacts through the incident hypotheses, patches, report, and approval
+routes. Normal mode fails closed unless a staged Docker pipeline is explicitly
+injected/configured; it never silently falls back to host execution.
+
+The deterministic end-to-end proof runs the real four-defect demo regression
+suite red, applies a unified diff only in a disposable workspace, runs the same
+suite green, persists separate evidence for both sides, and leaves the report
+pending approval:
+
+```sh
+npm --prefix services/api test -- --run src/pipeline/recovery-pipeline.integration.test.ts
+```
+
+The test-only runner is explicitly injected and executes temporary copies. The
+production composition point is `StagedDockerVerificationRunner`, which uses a
+reviewed digest-pinned image, disabled network by default, bounded output, and
+independent cleanup. Docker is not required for the offline test suite.
+
 ## Reproducible setup
 
 Requirements: Python 3.12.x, Node.js 20.11.1, npm, `make`, and optionally
@@ -89,6 +151,15 @@ The API exposes:
 - `GET http://localhost:4000/health`
 - `GET http://localhost:4000/api/incidents`
 - `GET http://localhost:4000/api/incidents/RIFT-042`
+- `GET http://localhost:4000/api/incidents/RIFT-042/report` — reads the
+  evidence-backed report and approval state
+- `POST http://localhost:4000/api/incidents/:incidentId/recovery` — runs the
+  local demo MVP pipeline when `RIFT_MVP_MODE=demo` is enabled; accepts only
+  server-validated manifest, evidence, and expected baseline signature fields
+- `POST http://localhost:4000/api/reports` — validates and stores a report
+  assembled from investigation, patch, verification, and evidence records
+- `POST http://localhost:4000/api/reports/:reportId/approval` — records an
+  explicit human approval or rejection intent; this is not a production action
 - `POST http://localhost:4000/api/incidents/intake` — accepts a versioned JSON
   incident manifest and returns its deterministic content hash and evidence
   record. Invalid, oversized, unauthorized, unsafe, or secret-bearing input
@@ -142,8 +213,8 @@ credentials, production logs, source snapshots, or generated incident data.
 
 ## What needs testing next
 
-The current implementation is a read-only dashboard, so the highest-value
-checks are:
+The current implementation keeps the dashboard and approval flow local and
+safe, so the highest-value checks are:
 
 - frontend loading, empty, API failure, retry, incident selection, and detail
   rendering states;
@@ -155,9 +226,9 @@ checks are:
   retry, and navigation controls;
 - end-to-end startup with the API rewrite (`make dev`), plus production build
   and Docker startup on a clean Linux machine;
-- once recovery actions exist: baseline reproduction, patch authorization,
-  isolation, timeout/cancellation, evidence provenance, verification semantics,
-  and the human approval boundary described in
+- baseline reproduction, patch authorization, isolation, timeout/cancellation,
+  evidence provenance, verification semantics, report replayability, and the
+  human approval boundary described in
   [`docs/testing-strategy.md`](docs/testing-strategy.md).
 
 The current Vitest setup covers the frontend API client and API routes. A real
@@ -173,8 +244,12 @@ intake is complete against its roadmap exit criteria: versioned manifest,
 deterministic validation, redaction and hashing utilities, local append-only
 evidence storage, and the manifest intake API are implemented and covered by
 offline tests. The default API test server remains in-memory; durable local
-selection is the only M1 integration caveat. Investigation, patch generation,
-sandbox execution, and recovery reporting remain out of scope for this slice.
-The M2 architecture baseline now fixes additive snapshot, command, normalization,
-timeline, hypothesis-citation, and investigation-result ports; specialist
-implementations and runtime M2 validators remain follow-up work.
+selection is the only M1 integration caveat. The integrated Phase 2–4 pipeline
+now validates and composes pinned snapshots, actual baseline reproduction,
+normalization, cited hypotheses, bounded patch proposals, isolated verification,
+recovery reports, and the terminal human approval boundary. Verification keeps
+baseline and patched evidence separate and rejects a `verified` result unless a
+nonzero baseline reproduced first, the patched checks exited green, and both
+sides have persisted evidence. Phase 5 remains for durable orchestration,
+production-grade runner image distribution, authenticated reviewer identity,
+and a browser/e2e suite.

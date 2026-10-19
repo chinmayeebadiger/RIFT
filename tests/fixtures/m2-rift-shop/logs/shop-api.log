@@ -1,0 +1,4 @@
+2026-10-18T11:59:41.000Z level=warn incident=RIFT-M2-RIFT-SHOP route=/cart event=quantity-update product=rift-hoodie quantity=0
+2026-10-18T11:59:42.000Z level=error incident=RIFT-M2-RIFT-SHOP route=/cart event=display-total subtotal_cents=1000 discount_cents=100 displayed_total_cents=800
+2026-10-18T11:59:43.000Z level=error incident=RIFT-M2-RIFT-SHOP route=/checkout event=coupon-validation code=WELCOME10 expired=true accepted=true
+2026-10-18T11:59:44.000Z level=warn incident=RIFT-M2-RIFT-SHOP route=/search event=product-search query=hoodie matches=0 expected_product=rift-hoodie

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_PATCH_BYTES,
   validateCandidatePatch,
   validateHypothesis,
   validateHypothesisSet,
@@ -39,6 +40,13 @@ function hypothesis(): Record<string, unknown> {
 }
 
 describe("shared Phase 0 contract validators", () => {
+  it("rejects verified results without reproduction, green checks, or evidence", () => {
+    const result = { ...base("VerificationResult", "result-guard"), verificationPlanId: "plan-1", classification: "verified", baselineExitCode: 1, patchedExitCode: 0, evidenceIds: ["baseline", "patched"], baselineEvidenceIds: ["baseline"], patchedEvidenceIds: ["patched"] };
+    expect(validateVerificationResult(result).ok).toBe(true);
+    for (const overrides of [{ baselineExitCode: 0 }, { baselineExitCode: null }, { patchedExitCode: 1 }, { evidenceIds: [] }, { patchedEvidenceIds: ["baseline"] }]) {
+      expect(validateVerificationResult({ ...result, ...overrides }).ok).toBe(false);
+    }
+  });
   it("validates every post-intake contract through the shared package", () => {
     const validHypothesis = hypothesis();
     const validSet = {
@@ -50,7 +58,7 @@ describe("shared Phase 0 contract validators", () => {
       ...base("CandidatePatch", "patch-1"),
       sourceHypothesisId: "hypothesis-1",
       baseRevision: REVISION,
-      diff: "diff --git a/src/checkout.ts b/src/checkout.ts",
+      diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n",
       touchedPaths: ["src/checkout.ts"],
       rationale: "Apply the discount once.",
       expectedInvariant: "The final total is discounted exactly once.",
@@ -82,6 +90,14 @@ describe("shared Phase 0 contract validators", () => {
       facts: ["The baseline reproduces the fixture failure."],
       inferences: ["The duplicate discount application is causal."],
       unknowns: ["Production traffic mix was not tested."],
+      evidenceCitations: [],
+      hypotheses: [],
+      patches: [],
+      commands: [],
+      environmentFingerprint: null,
+      baselineResults: [],
+      patchedResults: [],
+      evidenceIds: [],
       approvalRequired: true,
     };
 
@@ -107,5 +123,86 @@ describe("shared Phase 0 contract validators", () => {
       approvalRequired: false,
     };
     expect(validateRecoveryReport(report).ok).toBe(false);
+  });
+
+  it("validates unified diff paths, hunk counts, authorization, and structured invariants", () => {
+    const patch = {
+      ...base("CandidatePatch", "patch-1"),
+      sourceHypothesisId: "hypothesis-1",
+      baseRevision: REVISION,
+      diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n",
+      touchedPaths: ["src/checkout.ts"],
+      rationale: "Apply the discount once.",
+      expectedInvariant: "The final total is discounted exactly once.",
+      expectedInvariantDetails: {
+        statement: "The final total is discounted exactly once.",
+        verificationHint: "The checkout regression test passes.",
+      },
+      generatedBy: { actor: "fake-model" },
+    };
+
+    expect(validateCandidatePatch(patch, { context: { allowedPaths: ["src"] } }).ok).toBe(true);
+    expect(validateCandidatePatch({ ...patch, expectedInvariantDetails: { statement: "ok", extra: true } }).ok).toBe(false);
+    expect(validateCandidatePatch(patch, { allowedPaths: ["tests"] }).ok).toBe(false);
+    expect(validateCandidatePatch({ ...patch, touchedPaths: ["src/other.ts"] }).ok).toBe(false);
+    expect(validateCandidatePatch({ ...patch, diff: patch.diff.replace("@@ -1 +1 @@", "@@ -1,2 +1 @@") }).ok).toBe(false);
+    expect(validateCandidatePatch({ ...patch, diff: patch.diff.replaceAll("src/checkout.ts", ".env") , touchedPaths: [".env"] }).ok).toBe(false);
+  });
+
+  it("rejects malformed, binary, and unsupported diffs", () => {
+    const patch = {
+      ...base("CandidatePatch", "patch-1"),
+      sourceHypothesisId: "hypothesis-1",
+      baseRevision: REVISION,
+      diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n",
+      touchedPaths: ["src/checkout.ts"],
+      rationale: "Apply the discount once.",
+      expectedInvariant: "The final total is discounted exactly once.",
+      generatedBy: { actor: "human" },
+    };
+
+    expect(validateCandidatePatch({ ...patch, diff: "not a unified diff\n" }).ok).toBe(false);
+    expect(validateCandidatePatch({
+      ...patch,
+      diff: "diff --git a/src/checkout.ts b/src/checkout.ts\nindex abcdef1..abcdef2 100644\nBinary files a/src/checkout.ts and b/src/checkout.ts differ\n",
+    }).ok).toBe(false);
+    expect(validateCandidatePatch({
+      ...patch,
+      diff: patch.diff.replace("--- a/src/checkout.ts", "similarity index 100%\nrename from src/checkout.ts\nrename to src/other.ts\n--- a/src/checkout.ts"),
+    }).ok).toBe(false);
+  });
+
+  it("rejects oversized diffs and protected path families", () => {
+    const longLine = `+${"x".repeat(300)}\n`;
+    const patch = {
+      ...base("CandidatePatch", "patch-1"),
+      sourceHypothesisId: "hypothesis-1",
+      baseRevision: REVISION,
+      diff: `diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1,0 +1,1 @@\n${longLine}`,
+      touchedPaths: ["src/checkout.ts"],
+      rationale: "Apply the discount once.",
+      expectedInvariant: "The final total is discounted exactly once.",
+      generatedBy: { actor: "human", model: "fixture" },
+    };
+
+    expect(validateCandidatePatch(patch, { maxPatchBytes: MAX_PATCH_BYTES }).ok).toBe(true);
+    expect(validateCandidatePatch(patch, { maxPatchBytes: 256 }).ok).toBe(false);
+    expect(validateCandidatePatch({ ...patch, touchedPaths: [".github/workflows/release.yml"], diff: patch.diff.replaceAll("src/checkout.ts", ".github/workflows/release.yml") }).ok).toBe(false);
+    expect(validateCandidatePatch({ ...patch, touchedPaths: ["secrets/production.json"], diff: patch.diff.replaceAll("src/checkout.ts", "secrets/production.json") }).ok).toBe(false);
+  });
+
+  it("allows textual additions and deletions through /dev/null", () => {
+    const patch = {
+      ...base("CandidatePatch", "patch-1"),
+      sourceHypothesisId: "hypothesis-1",
+      baseRevision: REVISION,
+      diff: "diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1 @@\n+new\n",
+      touchedPaths: ["src/new.ts"],
+      rationale: "Add the helper.",
+      expectedInvariant: "The helper is available.",
+      generatedBy: { actor: "human" },
+    };
+    expect(validateCandidatePatch(patch).ok).toBe(true);
+    expect(validateCandidatePatch({ ...patch, diff: patch.diff.replace("--- /dev/null", "--- a/../outside.ts") }).ok).toBe(false);
   });
 });

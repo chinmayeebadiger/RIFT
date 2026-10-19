@@ -1,0 +1,39 @@
+diff --git a/demo/src/domain/shop.ts b/demo/src/domain/shop.ts
+--- a/demo/src/domain/shop.ts
++++ b/demo/src/domain/shop.ts
+@@ -92,5 +92,5 @@
+ export function searchProducts(query: string): readonly Product[] {
+-  const trimmedQuery = query.trim();
++  const trimmedQuery = query.trim().toLowerCase();
+   if (!trimmedQuery) {
+     return products;
+   }
+@@ -99,4 +99,4 @@
+   return products.filter(
+     (product) =>
+-      product.name.includes(trimmedQuery) || product.description.includes(trimmedQuery),
++      product.name.toLowerCase().includes(trimmedQuery) || product.description.toLowerCase().includes(trimmedQuery),
+   );
+@@ -125,5 +125,5 @@
+   return createCart(
+     cart.items.map((item) =>
+-      item.productId === productId ? { ...item, quantity: item.quantity + delta } : item,
+-    ),
++      item.productId === productId ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item,
++    ).filter((item) => item.quantity > 0),
+   );
+@@ -157,5 +157,7 @@
+   // `now` is retained in the signature so the intended repair boundary is explicit.
+-  void now;
++  if (new Date(coupon.expiresAt).getTime() <= now.getTime()) {
++    return { valid: false, message: "Coupon expired" };
++  }
+   // BUG-003: coupon expiry is intentionally ignored, so WELCOME10 remains accepted.
+   return { valid: true, coupon, message: "Coupon applied" };
+ }
+@@ -171,4 +173,4 @@
+ export function calculateDisplayedCartTotal(subtotalCents: number, discountCents: number): number {
+   // BUG-002: the presentation total deliberately applies the same discount twice.
+-  return subtotalCents - discountCents - discountCents;
++  return subtotalCents - discountCents;
+ }
