@@ -10,3 +10,4 @@ export { normalizeTimestamp, citeEvidence, normalizeLogEvidence, normalizeStackT
 export * as evidenceNormalization from "./normalization.js";
 export * as hypothesisEngine from "./hypothesis-engine.js";
 export * from "../patch/index.js";
+export * from "../operations/index.js";

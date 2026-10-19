@@ -57,6 +57,7 @@ make install
 make test
 make typecheck
 make build
+make scan
 ```
 
 `make test` runs the foundation checks, the frontend API-client suite, the API
@@ -73,6 +74,12 @@ make demo-regression
 It contains four deterministic regression tests, one for each seeded defect.
 Run it again after a repair; it should become green without changing the test
 expectations.
+
+`make scan` runs `npm audit --offline --audit-level=high` against every committed
+Node lockfile and checks the Dockerfile configuration without contacting a
+registry or requiring a Docker daemon. The reproducibility check enforces the
+exact Node version from `.nvmrc`, lockfile version 3, a multi-stage build, apt
+cleanup, `npm ci`, secret-file exclusions, and a non-root runtime user.
 
 ### Integrated recovery pipeline
 
@@ -250,6 +257,9 @@ normalization, cited hypotheses, bounded patch proposals, isolated verification,
 recovery reports, and the terminal human approval boundary. Verification keeps
 baseline and patched evidence separate and rejects a `verified` result unless a
 nonzero baseline reproduced first, the patched checks exited green, and both
-sides have persisted evidence. Phase 5 remains for durable orchestration,
-production-grade runner image distribution, authenticated reviewer identity,
-and a browser/e2e suite.
+sides have persisted evidence. M6 hardening is implemented with offline
+dependency/Docker configuration scans, retention controls, bounded reliability
+tests, threat-model documentation, an operator runbook, rollback guidance, and
+a pilot plan. A named human security sign-off and registry-backed scan of the
+exact staged image remain external release records; durable orchestration,
+authenticated reviewer identity, and a browser/e2e suite remain residual work.

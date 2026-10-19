@@ -432,9 +432,13 @@ function getPort(): number {
   return Number.isInteger(configuredPort) && configuredPort > 0 ? configuredPort : DEFAULT_PORT;
 }
 
+function getHost(): string {
+  return process.env.RIFT_HOST === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1";
+}
+
 export function startServer(): Server {
   const server = createApiServer();
-  server.listen(getPort(), "127.0.0.1", () => {
+  server.listen(getPort(), getHost(), () => {
     const address = server.address();
     const port = typeof address === "object" && address ? address.port : getPort();
     console.log(`${SERVICE_NAME} listening on port ${port}`);

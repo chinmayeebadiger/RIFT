@@ -1,4 +1,4 @@
-.PHONY: install dev test test-foundation test-web test-api test-security test-demo demo-regression typecheck build
+.PHONY: install dev test test-foundation test-web test-api test-security test-demo demo-regression typecheck build scan scan-dependencies scan-image
 
 install:
 	npm --prefix apps/web ci
@@ -40,3 +40,14 @@ build:
 	npm --prefix apps/web run build
 	npm --prefix services/api run build
 	npm --prefix demo run build
+
+scan: scan-dependencies scan-image
+
+scan-dependencies:
+	npm --prefix apps/web audit --offline --audit-level=high
+	npm --prefix services/api audit --offline --audit-level=high
+	npm --prefix demo audit --offline --audit-level=high
+	npm --prefix packages/core audit --offline --audit-level=high
+
+scan-image:
+	python3 scripts/check_reproducibility.py

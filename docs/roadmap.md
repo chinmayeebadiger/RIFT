@@ -70,10 +70,16 @@ hypotheses, patches, command results, and baseline-versus-patched evidence; a
 reviewer can replay the claim from those records; and the approval endpoint
 records human intent without applying, merging, pushing, or deploying changes.
 
-## M6 — Hardening and pilot
+## M6 — Hardening and pilot (implementation complete; pilot sign-off pending)
 
 Deliverables: threat-model review, dependency and image scanning, load/failure
 tests, retention controls, operational runbook, and a limited pilot.
 
-Exit criteria: security sign-off, documented residual risks, rollback procedure,
-and observed reliability targets from representative incidents.
+Implementation exit criteria met: the threat model, residual-risk register,
+rollback/runbook, offline dependency and Docker configuration scans, retention
+controls, bounded reliability/failure tests, and pilot plan are versioned and
+covered by the reproducibility and operational test suites. Final pilot exit
+still requires named security sign-off and a current scan of the exact staged
+image; the current Docker Scout report records unresolved high-severity Debian
+findings, so that external gate remains blocked rather than being silently
+waived.

@@ -9,10 +9,14 @@ the code and update it in the same change as a contract or policy change.
 - **Architecture:** components, data flow, trust boundaries, and contracts.
 - **ADR directory:** one record per consequential decision, especially sandbox,
   persistence, model provider, and approval policy.
-- **Operator runbook:** incident intake, cancellation, cleanup, retention,
-  failure modes, and escalation.
-- **Security model:** threat model, secret handling, permissions, isolation,
-  audit, and residual risks.
+- **Operator runbook:** [`operator-runbook.md`](operator-runbook.md) covers
+  incident intake, cancellation, cleanup, retention, failure modes, rollback,
+  and escalation.
+- **Security model:** [`security-model.md`](security-model.md) covers the threat
+  model, secret handling, permissions, isolation, scans, sign-off, and residual
+  risks.
+- **M6 pilot plan:** [`pilot-plan.md`](pilot-plan.md) defines pilot scope,
+  entry/exit criteria, scenarios, metrics, and security sign-off.
 - **API/schema reference:** versioned manifests, results, and compatibility
   policy with examples containing synthetic data only.
 - **Contributor guide:** runtime pin, lockfile workflow, `make test`, fixture
