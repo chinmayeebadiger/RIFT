@@ -6,6 +6,7 @@ import type { CandidatePatch, CommandSpec, IncidentManifest, JsonValue, Verifica
 import { validateEvidenceItem } from "@rift/core";
 import { InMemoryEvidenceStore, LocalEvidenceStore } from "../domain/evidence-store.js";
 import { computeEvidenceHash, sha256 } from "../domain/hashing.js";
+import { computeCandidatePatchContentHash } from "../investigation/candidate-patch-ranker.js";
 import type { ProcessResult, ProcessRunner, ProcessRunOptions } from "./docker-runner.js";
 import { BoundedVerificationConcurrency, VerificationOrchestrator, verificationIdempotencyKey } from "./orchestrator.js";
 import type { VerificationWorkspace } from "./ports.js";
@@ -30,9 +31,10 @@ function fixtures() {
     policy: { networkAccess: "disabled", allowedCommands: ["npm"], maxEvidenceBytes: 8192 } };
   const plan: VerificationPlan = { ...common, kind: "VerificationPlan", id: "plan-1", candidatePatchId: "patch-1", baseRevision: REVISION,
     baselineCommand: COMMAND, verificationCommands: [COMMAND], timeoutMs: 1000, networkAccess: "disabled" };
-  const patch: CandidatePatch = { ...common, kind: "CandidatePatch", id: "patch-1", sourceHypothesisId: "hypothesis-1", baseRevision: REVISION,
+  const patchWithoutHash: Omit<CandidatePatch, "contentHash"> = { ...common, kind: "CandidatePatch" as const, id: "patch-1", sourceHypothesisId: "hypothesis-1", baseRevision: REVISION,
     diff: "diff --git a/demo/src/checkout.ts b/demo/src/checkout.ts\n--- a/demo/src/checkout.ts\n+++ b/demo/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n",
     touchedPaths: ["demo/src/checkout.ts"], rationale: "Apply the discount once.", expectedInvariant: "Discount is applied exactly once.", generatedBy: { actor: "human" } };
+  const patch: CandidatePatch = { ...patchWithoutHash, contentHash: computeCandidatePatchContentHash(patchWithoutHash) };
   return { manifest, plan, patch, correlationId: common.correlationId };
 }
 
@@ -208,6 +210,26 @@ describe("StagedDockerVerificationRunner", () => {
     f.process.hook = (call) => call.args.includes("archive") ? { ...success("archive"), stdoutTruncated: true } as ProcessResult : undefined;
     await expect(f.runner.createWorkspace({ ...f.context, phase: "baseline" })).rejects.toThrow("ARCHIVE_FAILED_OR_TOO_LARGE");
     expect(f.process.calls.some((call) => call.args[0] === "create")).toBe(false);
+  });
+
+  it("archives only the explicitly effective authorized scope", async () => {
+    const f = setup();
+    const workspace = await f.runner.createWorkspace({ ...f.context, effectiveAuthorizedPaths: ["demo/src/checkout.ts"], phase: "baseline" });
+    expect(workspace.phase).toBe("baseline");
+    const archive = f.process.calls.find((call) => call.args.includes("archive"));
+    expect(archive?.args.slice(-2)).toEqual(["--", "demo/src/checkout.ts"]);
+  });
+
+  it("rejects a patch outside the effective authorized scope", async () => {
+    const f = setup();
+    const effective = ["demo/src/checkout.ts"] as const;
+    const baseline = await f.runner.createWorkspace({ ...f.context, effectiveAuthorizedPaths: effective, phase: "baseline" });
+    await f.runner.runBaseline({ ...f.context, effectiveAuthorizedPaths: effective, workspace: baseline });
+    const workspace = await f.runner.createWorkspace({ ...f.context, effectiveAuthorizedPaths: effective, phase: "patched" });
+    const withoutHash = { ...f.input.patch, diff: f.input.patch.diff.replaceAll("demo/src/checkout.ts", "demo/other.ts"), touchedPaths: ["demo/other.ts"] };
+    const patch = { ...withoutHash, contentHash: computeCandidatePatchContentHash(withoutHash) };
+    await expect(f.runner.applyPatch({ ...patchRequest(f, workspace), effectiveAuthorizedPaths: effective, patch })).rejects.toThrow("PATCH_VALIDATION_FAILED");
+    expect(f.process.calls.some((call) => call.args.includes("apply"))).toBe(false);
   });
 
   it("checks the shared diff validator, touched paths, scope, revisions and correlation before applying", async () => {
@@ -416,6 +438,8 @@ describe("BoundedStagedProcessRunner", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.length).toBe(128);
     expect(result.stderr.length).toBe(128);
+    expect(result.stdoutBytes).toBe(100000);
+    expect(result.stderrBytes).toBe(100000);
     expect(result.stdoutTruncated).toBe(true);
     expect(result.stderrTruncated).toBe(true);
   });

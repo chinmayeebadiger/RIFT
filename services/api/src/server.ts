@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { findIncident, demoIncidents } from "./domain/incidents.js";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { findIncident, demoIncidents, type Incident } from "./domain/incidents.js";
 import { InMemoryEvidenceStore } from "./domain/evidence-store.js";
 import type { EvidenceStore } from "./domain/evidence-store.js";
 import { intakeIncidentManifest, ManifestValidationError, MAX_MANIFEST_BYTES } from "./domain/intake.js";
@@ -7,10 +9,21 @@ import { findRecoveryData } from "./domain/recovery-data.js";
 import { InMemoryReportStore, ReportStoreError } from "./report/store.js";
 import { EvidenceBackedReportGenerator, ReportGenerationError } from "./report/generator.js";
 import type { HumanApprovalRequest, ReportGenerationRequest, ReportStore } from "./report/ports.js";
+import {
+  createDemoRecoveryPipeline,
+  createRecoveryPipeline,
+  RecoveryPipelineError,
+  type RecoveryPipelineDependencies,
+  type RecoveryPipelineRequest,
+  type RecoveryPipelineResult,
+} from "./pipeline/index.js";
 
 const SERVICE_NAME = "rift-api";
 const SERVICE_VERSION = "0.1.0";
 const DEFAULT_PORT = 4000;
+const DEMO_ALLOWED_PATHS = ["demo/src/domain/shop.ts"] as const;
+const DEMO_ALLOWED_COMMANDS = ["node", "npm"] as const;
+const DEMO_TARGET_PATHS = ["demo/src/domain/shop.ts"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -62,7 +75,116 @@ function readJson(request: IncomingMessage): Promise<unknown> {
   });
 }
 
-function handleRequest(request: IncomingMessage, response: ServerResponse, evidenceStore: EvidenceStore, reportStore: ReportStore): void {
+export interface RecoveryPipelineLike {
+  run(request: RecoveryPipelineRequest): Promise<RecoveryPipelineResult>;
+}
+
+export interface RecoveryPipelineFactoryContext {
+  readonly request: RecoveryPipelineRequest;
+  readonly expectedBaselineFailure: RecoveryPipelineRequest["expectedBaselineFailure"];
+  readonly evidenceStore: EvidenceStore;
+  readonly reportStore: ReportStore;
+  readonly demoRepositoryRoot: string;
+}
+
+export interface ApiServerOptions {
+  readonly evidenceStore?: EvidenceStore;
+  readonly reportStore?: ReportStore;
+  /** Inject a complete pipeline composition for HTTP tests or a staged runner. */
+  readonly pipelineFactory?: (context: RecoveryPipelineFactoryContext) => RecoveryPipelineLike;
+  /** Convenience injection for callers that already assembled all pipeline ports. */
+  readonly pipelineDependencies?: RecoveryPipelineDependencies;
+  /** Server-owned source root; it is never read from a recovery request. */
+  readonly demoRepositoryRoot?: string;
+}
+
+interface RecoveryArtifacts {
+  readonly result: RecoveryPipelineResult;
+  readonly incident: Incident;
+}
+
+interface ApiState {
+  readonly evidenceStore: EvidenceStore;
+  readonly reportStore: ReportStore;
+  readonly options: ApiServerOptions;
+  readonly demoRepositoryRoot: string;
+  readonly dynamicIncidents: Map<string, Incident>;
+  readonly artifacts: Map<string, RecoveryArtifacts>;
+}
+
+class RecoveryRequestError extends Error {
+  public constructor(public readonly code: string, message: string, public readonly statusCode = 400) { super(message); }
+}
+
+function recoveryRequest(body: unknown, incidentId: string, evidenceStore: EvidenceStore): { request: RecoveryPipelineRequest; expected: RecoveryPipelineRequest["expectedBaselineFailure"] } {
+  if (!isRecord(body) || Object.keys(body).some((key) => !["manifest", "evidence", "expectedBaselineFailure"].includes(key))) {
+    throw new RecoveryRequestError("RECOVERY_INPUT_INVALID", "Recovery request accepts manifest, evidence, and expectedBaselineFailure only");
+  }
+  if (!Array.isArray(body.evidence ?? [])) throw new RecoveryRequestError("RECOVERY_EVIDENCE_INVALID", "Recovery evidence must be an array");
+  const expected = body.expectedBaselineFailure;
+  if (!isRecord(expected) || Object.keys(expected).some((key) => !["code", "signature"].includes(key)) || typeof expected.code !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(expected.code) || typeof expected.signature !== "string" || !expected.signature.trim() || expected.signature.length > 512) {
+    throw new RecoveryRequestError("EXPECTED_BASELINE_SIGNATURE_REQUIRED", "expectedBaselineFailure.code and .signature are required");
+  }
+  const intake = intakeIncidentManifest(body.manifest, evidenceStore, { actor: "local-recovery-request" });
+  if (intake.manifest.incidentId !== incidentId) throw new RecoveryRequestError("INCIDENT_ID_MISMATCH", "Manifest incidentId must match the route incident id");
+  // The manifest is descriptive input. Capability authority remains server-owned;
+  // reject manifests that attempt to widen the demo fixture's scope or policy.
+  if (intake.manifest.allowedPaths.some((path) => !DEMO_ALLOWED_PATHS.includes(path as typeof DEMO_ALLOWED_PATHS[number]))) {
+    throw new RecoveryRequestError("DEMO_PATH_NOT_ALLOWED", "Recovery manifest paths must stay within the configured demo fixture");
+  }
+  if (intake.manifest.policy.networkAccess !== "disabled" || intake.manifest.policy.allowedCommands?.some((command) => !DEMO_ALLOWED_COMMANDS.includes(command as typeof DEMO_ALLOWED_COMMANDS[number]))) {
+    throw new RecoveryRequestError("DEMO_POLICY_NOT_ALLOWED", "Recovery manifest must use the configured offline demo policy");
+  }
+  if ([intake.manifest.reproductionCommand, ...intake.manifest.testCommands].some((command) => !DEMO_ALLOWED_COMMANDS.includes(command.command as typeof DEMO_ALLOWED_COMMANDS[number]))) {
+    throw new RecoveryRequestError("DEMO_COMMAND_NOT_ALLOWED", "Recovery commands must use the configured demo command set");
+  }
+  const expectedBaselineFailure = { code: expected.code, signature: expected.signature };
+  return {
+    expected: expectedBaselineFailure,
+    request: {
+      manifest: intake.manifest,
+      evidence: body.evidence as readonly unknown[],
+      expectedBaselineFailure,
+      repositoryCapability: { repositoryRevision: intake.manifest.repositoryRevision, allowedPaths: DEMO_ALLOWED_PATHS },
+      baselineCapability: { allowedCommands: DEMO_ALLOWED_COMMANDS, networkAccess: "disabled", timeoutMs: 30_000 },
+      modelPolicy: { authorized: true, actor: "fake-model", allowedPaths: DEMO_ALLOWED_PATHS, targetPaths: DEMO_TARGET_PATHS },
+    },
+  };
+}
+
+function dynamicIncident(result: RecoveryPipelineResult): Incident {
+  const now = result.manifest.createdAt;
+  return {
+    id: result.manifest.incidentId,
+    severity: "SEV-3",
+    status: "investigating",
+    stage: result.verificationResults.length > 0 ? "patch-review" : "reproduced",
+    title: `Recovery request ${result.manifest.incidentId}`,
+    summary: "Local recovery investigation generated an evidence-backed report pending human approval.",
+    service: result.manifest.repositoryRevision.repository,
+    repository: result.manifest.repositoryRevision.repository,
+    commit: result.manifest.repositoryRevision.revision,
+    detectedAt: now,
+    updatedAt: now,
+    evidenceCount: result.reportRecord.report.evidenceIds.length,
+    demo: true,
+    timeline: [{ timestamp: now, title: "Recovery investigation completed", detail: "Candidate artifacts and a pending report are available for review." }],
+  };
+}
+
+function buildPipeline(state: ApiState, request: RecoveryPipelineRequest, expected: RecoveryPipelineRequest["expectedBaselineFailure"]): RecoveryPipelineLike {
+  const context: RecoveryPipelineFactoryContext = { request, expectedBaselineFailure: expected, evidenceStore: state.evidenceStore, reportStore: state.reportStore, demoRepositoryRoot: state.demoRepositoryRoot };
+  if (state.options.pipelineFactory) return state.options.pipelineFactory(context);
+  if (state.options.pipelineDependencies) return createRecoveryPipeline(state.options.pipelineDependencies);
+  if (process.env.NODE_ENV === "test" || process.env.RIFT_MVP_MODE === "demo") {
+    return createDemoRecoveryPipeline({ repositoryRoot: state.demoRepositoryRoot, evidenceStore: state.evidenceStore, reportStore: state.reportStore, expectedBaselineFailure: expected });
+  }
+  if (!process.env.RIFT_STAGED_DOCKER_IMAGE) throw new RecoveryRequestError("STAGED_DOCKER_CONFIG_REQUIRED", "Recovery is disabled until a staged Docker composition is configured", 503);
+  throw new RecoveryRequestError("STAGED_DOCKER_COMPOSITION_REQUIRED", "A staged Docker pipeline must be injected through pipelineFactory or pipelineDependencies", 503);
+}
+
+function handleRequest(request: IncomingMessage, response: ServerResponse, state: ApiState): void {
+  const { evidenceStore, reportStore } = state;
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   if (request.method === "POST" && requestUrl.pathname === "/api/incidents/intake") {
     void readJson(request).then((body) => {
@@ -78,6 +200,44 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, evide
     }).catch((error: unknown) => {
       const code = error instanceof Error && "code" in error ? String(error.code) : "MALFORMED_JSON";
       sendJson(response, code === "BODY_TOO_LARGE" ? 413 : 400, { error: error instanceof Error ? error.message : "Malformed JSON request body", code, errors: [{ code, path: "$", message: error instanceof Error ? error.message : "Malformed JSON request body" }] });
+    });
+    return;
+  }
+  const recoveryPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/recovery$/u);
+  if (request.method === "POST" && recoveryPath) {
+    const incidentId = decodeURIComponent(recoveryPath[1]);
+    void readJson(request).then((body) => {
+      try {
+        const parsed = recoveryRequest(body, incidentId, evidenceStore);
+        const pipeline = buildPipeline(state, parsed.request, parsed.expected);
+        return pipeline.run(parsed.request).then((result) => {
+          const incident = dynamicIncident(result);
+          state.dynamicIncidents.set(incident.id, incident);
+          state.artifacts.set(incident.id, { result, incident });
+          sendJson(response, 201, {
+            incident,
+            manifest: result.manifest,
+            hypothesisSet: result.hypothesisSet,
+            patches: result.patchGeneration.candidatePatches,
+            report: result.reportRecord,
+          });
+        });
+      } catch (error: unknown) {
+        if (error instanceof ManifestValidationError) {
+          sendJson(response, error.statusCode, { error: "Recovery manifest rejected", code: error.errors[0]?.code, errors: error.errors });
+        } else if (error instanceof RecoveryRequestError) {
+          sendJson(response, error.statusCode, { error: error.message, code: error.code });
+        } else {
+          sendJson(response, 422, { error: error instanceof Error ? error.message : "Recovery request failed", code: error instanceof RecoveryPipelineError ? error.code : "RECOVERY_FAILED" });
+        }
+      }
+    }).catch((error: unknown) => {
+      if (error instanceof RecoveryRequestError) {
+        sendJson(response, error.statusCode, { error: error.message, code: error.code });
+        return;
+      }
+      const code = error instanceof Error && "code" in error ? String(error.code) : "RECOVERY_FAILED";
+      sendJson(response, code === "BODY_TOO_LARGE" ? 413 : code === "MALFORMED_JSON" ? 400 : 422, { error: error instanceof Error ? error.message : "Recovery request failed", code });
     });
     return;
   }
@@ -205,40 +365,41 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, evide
   }
 
   if (requestUrl.pathname === "/api/incidents") {
-    sendJson(response, 200, demoIncidents);
+    const dynamic = [...state.dynamicIncidents.values()].filter((incident) => !demoIncidents.some((demo) => demo.id === incident.id));
+    sendJson(response, 200, [...demoIncidents, ...dynamic]);
     return;
   }
 
   const hypothesesPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/hypotheses$/);
   if (hypothesesPath) {
     const incidentId = decodeURIComponent(hypothesesPath[1]);
-    const incident = findIncident(incidentId);
+    const incident = findIncident(incidentId) ?? state.dynamicIncidents.get(incidentId);
     if (!incident) {
       sendJson(response, 404, { error: "Incident not found", id: incidentId });
       return;
     }
 
-    sendJson(response, 200, findRecoveryData(incidentId)?.hypothesisSet);
+    sendJson(response, 200, state.artifacts.get(incidentId)?.result.hypothesisSet ?? findRecoveryData(incidentId)?.hypothesisSet);
     return;
   }
 
   const patchesPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/patches$/);
   if (patchesPath) {
     const incidentId = decodeURIComponent(patchesPath[1]);
-    const incident = findIncident(incidentId);
+    const incident = findIncident(incidentId) ?? state.dynamicIncidents.get(incidentId);
     if (!incident) {
       sendJson(response, 404, { error: "Incident not found", id: incidentId });
       return;
     }
 
-    sendJson(response, 200, findRecoveryData(incidentId)?.patches ?? []);
+    sendJson(response, 200, state.artifacts.get(incidentId)?.result.patchGeneration.candidatePatches ?? findRecoveryData(incidentId)?.patches ?? []);
     return;
   }
 
   const incidentPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)$/);
   if (incidentPath) {
     const incidentId = decodeURIComponent(incidentPath[1]);
-    const incident = findIncident(incidentId);
+    const incident = findIncident(incidentId) ?? state.dynamicIncidents.get(incidentId);
 
     if (!incident) {
       sendJson(response, 404, { error: "Incident not found", id: incidentId });
@@ -252,15 +413,18 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, evide
   sendJson(response, 404, { error: "Route not found" });
 }
 
-export interface ApiServerOptions {
-  readonly evidenceStore?: EvidenceStore;
-  readonly reportStore?: ReportStore;
-}
-
 export function createApiServer(options: ApiServerOptions = {}): Server {
   const evidenceStore = options.evidenceStore ?? new InMemoryEvidenceStore();
   const reportStore = options.reportStore ?? new InMemoryReportStore();
-  return createServer((request, response) => handleRequest(request, response, evidenceStore, reportStore));
+  const state: ApiState = {
+    evidenceStore,
+    reportStore,
+    options,
+    demoRepositoryRoot: options.demoRepositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../.."),
+    dynamicIncidents: new Map(),
+    artifacts: new Map(),
+  };
+  return createServer((request, response) => handleRequest(request, response, state));
 }
 
 function getPort(): number {
@@ -270,7 +434,7 @@ function getPort(): number {
 
 export function startServer(): Server {
   const server = createApiServer();
-  server.listen(getPort(), () => {
+  server.listen(getPort(), "127.0.0.1", () => {
     const address = server.address();
     const port = typeof address === "object" && address ? address.port : getPort();
     console.log(`${SERVICE_NAME} listening on port ${port}`);

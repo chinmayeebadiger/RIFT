@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type {
   CandidatePatch, CommandExecution, EvidenceCitation, EvidenceItem, HypothesisSet,
   IncidentManifest, InvestigationResult, InvestigationTimeline, JsonValue, LogNormalization,
@@ -25,7 +28,195 @@ import type { CandidatePatchProvider, ModelAdapterOptions } from "../model-adapt
 import { EvidenceBackedReportGenerator } from "../report/generator.js";
 import type { RecoveryReportRecord, ReportStore } from "../report/ports.js";
 import { BoundedVerificationConcurrency, VerificationOrchestrator, verificationIdempotencyKey } from "../verification/orchestrator.js";
-import type { CommandOutcome, VerificationAuditSink, VerificationRunner } from "../verification/ports.js";
+import type { CommandOutcome, VerificationAuditSink, VerificationRunner, VerificationWorkspace } from "../verification/ports.js";
+
+/**
+ * Explicitly local-only composition used by the API's demo mode and tests.
+ * It reads one server-owned demo file and records deterministic fixture output;
+ * it never accepts a repository path, image, command allowlist, or actor from a
+ * recovery request.
+ */
+export interface DemoRecoveryPipelineOptions {
+  readonly repositoryRoot: string;
+  readonly evidenceStore: EvidenceStore;
+  readonly reportStore: ReportStore;
+  readonly expectedBaselineFailure: { readonly code: string; readonly signature: string };
+  readonly clock?: () => string;
+}
+
+function byteHash(value: Buffer): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function fixtureEvidence(store: EvidenceStore, manifest: IncidentManifest, id: string, content: JsonValue, source: string, clock: () => string): string {
+  const timestamp = clock();
+  const body = {
+    schemaVersion: 1 as const,
+    kind: "EvidenceItem" as const,
+    id,
+    incidentId: manifest.incidentId,
+    correlationId: manifest.correlationId,
+    createdAt: timestamp,
+    capturedAt: timestamp,
+    content,
+    source: { type: source, locator: `demo-fixture:${id}` },
+    redaction: { status: "not-required" as const },
+    provenance: { actor: "demo-fixture-runner", tool: "in-process-fixture" },
+  };
+  const item = { ...body, contentHash: sha256(body as unknown as JsonValue) };
+  return store.append(item).id;
+}
+
+class DemoSnapshotReader implements RepositorySnapshotReader {
+  public constructor(private readonly options: Pick<DemoRecoveryPipelineOptions, "repositoryRoot" | "clock">) {}
+
+  public async read(request: Parameters<RepositorySnapshotReader["read"]>[0]): Promise<unknown> {
+    const sourcePath = join(this.options.repositoryRoot, "demo/src/domain/shop.ts");
+    const content = await readFile(sourcePath);
+    const files = [{ path: "demo/src/domain/shop.ts", contentHash: byteHash(content), byteLength: content.byteLength }];
+    const body = {
+      schemaVersion: 1 as const,
+      id: `demo-snapshot-${sha256({ repositoryRevision: request.repositoryRevision, files } as unknown as JsonValue).slice(7, 39)}`,
+      incidentId: request.incidentId,
+      correlationId: request.correlationId,
+      createdAt: this.options.clock?.() ?? new Date().toISOString(),
+      kind: "RepositorySnapshot" as const,
+      repositoryRevision: request.repositoryRevision,
+      files,
+      adapter: { name: "rift-demo-fixture", version: "1" },
+    };
+    return { ...body, contentHash: sha256(body as unknown as JsonValue) };
+  }
+}
+
+class DemoBaselineExecutor implements BaselineReproductionExecutor {
+  private readonly outputs = new Map<string, CommandOutput>();
+  public constructor(private readonly store: EvidenceStore, private readonly expected: DemoRecoveryPipelineOptions["expectedBaselineFailure"], private readonly clock: () => string) {}
+
+  public async execute(request: Parameters<BaselineReproductionExecutor["execute"]>[0]): Promise<CommandExecution> {
+    const startedAt = this.clock();
+    const stdout = `signature=${this.expected.code} status=1 message="${this.expected.signature}"`;
+    const body = {
+      schemaVersion: 1 as const,
+      kind: "CommandExecution" as const,
+      id: `demo-baseline-${request.correlationId}`,
+      incidentId: request.incidentId,
+      correlationId: request.correlationId,
+      createdAt: startedAt,
+      snapshotId: request.snapshotId,
+      command: { ...request.command, args: [...(request.command.args ?? [])] },
+      status: "failed" as const,
+      exitCode: 1,
+      startedAt,
+      finishedAt: startedAt,
+      evidenceIds: [] as string[],
+      failure: { code: this.expected.code, message: "Demo fixture baseline failure" },
+    };
+    const execution = { ...body, contentHash: sha256(body as unknown as JsonValue) } as CommandExecution;
+    this.outputs.set(execution.id, { stdout, stderr: "" });
+    return execution;
+  }
+
+  public getOutput(executionId: string): CommandOutput | undefined { return this.outputs.get(executionId); }
+}
+
+class DemoVerificationRunner implements VerificationRunner {
+  private sequence = 0;
+  private readonly manifests = new Map<string, IncidentManifest>();
+  public constructor(private readonly store: EvidenceStore, private readonly expected: DemoRecoveryPipelineOptions["expectedBaselineFailure"], private readonly clock: () => string) {}
+
+  public async createWorkspace(request: Parameters<VerificationRunner["createWorkspace"]>[0]): Promise<VerificationWorkspace> {
+    this.manifests.set(request.runId, request.manifest);
+    return { id: `demo-workspace-${request.runId}-${request.phase}`, phase: request.phase };
+  }
+
+  public async runBaseline(request: Parameters<VerificationRunner["runBaseline"]>[0]): Promise<CommandOutcome> {
+    const evidenceIds = [fixtureEvidence(this.store, request.manifest, `demo-verification-baseline-${request.runId}`, `demo baseline: ${this.expected.signature}`, "demo-fixture-baseline", this.clock)];
+    return { status: "failed", exitCode: 1, reproduced: true, failureCode: this.expected.code, evidenceIds };
+  }
+
+  public async applyPatch(request: Parameters<VerificationRunner["applyPatch"]>[0]): Promise<{ applied: boolean; receiptId: string; evidenceIds: string[] }> {
+    const id = `demo-patch-application-${request.runId}`;
+    const manifest = this.manifest(request.runId);
+    const evidenceIds = [fixtureEvidence(this.store, manifest, id, "demo patch application recorded", "demo-fixture-patch", this.clock)];
+    return { applied: true, receiptId: id, evidenceIds };
+  }
+
+  public async runChecks(request: Parameters<VerificationRunner["runChecks"]>[0]): Promise<{ executions: CommandOutcome[] }> {
+    const manifest = this.manifest(request.runId);
+    return { executions: request.plan.verificationCommands.map((_, index) => ({
+      status: "succeeded" as const,
+      exitCode: 0,
+      evidenceIds: [fixtureEvidence(this.store, manifest, `demo-check-${request.workspace.id}-${this.sequence++}-${index}`, "demo verification passed", "demo-fixture-check", this.clock)],
+    })) };
+  }
+
+  public async cleanup(request: Parameters<VerificationRunner["cleanup"]>[0]): Promise<{ cleaned: true }> { this.manifests.delete(request.runId); return { cleaned: true }; }
+  private manifest(runId: string): IncidentManifest {
+    const manifest = this.manifests.get(runId);
+    if (!manifest) throw new RecoveryPipelineError("DEMO_RUN_CONTEXT_MISSING");
+    return manifest;
+  }
+}
+
+class DemoPatchProvider implements CandidatePatchProvider {
+  public readonly name = "demo-fixture-model";
+  public constructor(private readonly repositoryRoot: string) {}
+
+  public async generate(input: string, signal: AbortSignal): Promise<unknown> {
+    if (signal.aborted) throw new DOMException("The demo fixture model was cancelled", "AbortError");
+    const modelInput = JSON.parse(input) as { incidentId: string; correlationId: string; createdAt: string; repositoryRevision: { repository: string; revision: string }; hypothesisId: string; targetPath: string };
+    // Keep the local MVP proposal deterministic and contract-valid even when the
+    // optional integration fixture is absent or changes independently. The demo
+    // runner records this candidate; it never applies it to the server checkout.
+    const diff = [
+      "diff --git a/demo/src/domain/shop.ts b/demo/src/domain/shop.ts",
+      "--- a/demo/src/domain/shop.ts",
+      "+++ b/demo/src/domain/shop.ts",
+      "@@ -1 +1 @@",
+      "-export interface Product {",
+      "+export interface ProductRecord {",
+      "",
+    ].join("\n");
+    const body = {
+      kind: "CandidatePatch" as const,
+      schemaVersion: 1 as const,
+      id: `demo-patch-${modelInput.correlationId}`,
+      incidentId: modelInput.incidentId,
+      correlationId: modelInput.correlationId,
+      createdAt: modelInput.createdAt,
+      sourceHypothesisId: modelInput.hypothesisId,
+      baseRevision: modelInput.repositoryRevision,
+      diff,
+      touchedPaths: ["demo/src/domain/shop.ts"],
+      rationale: "Apply the reviewed deterministic demo repair in an isolated fixture workspace.",
+      expectedInvariant: "The configured demo baseline failure is no longer reproduced.",
+      generatedBy: { actor: "fake-model" as const, model: "rift-demo-fixture-v1" },
+    };
+    return JSON.stringify({ ...body, contentHash: sha256(body as unknown as JsonValue) });
+  }
+}
+
+class NoopAudit implements VerificationAuditSink {
+  public append(): void { /* local MVP audit is represented by evidence records */ }
+}
+
+export function createDemoRecoveryPipeline(options: DemoRecoveryPipelineOptions): RecoveryPipeline {
+  const clock = options.clock ?? (() => new Date().toISOString());
+  const snapshotReader = new DemoSnapshotReader(options);
+  const baselineExecutor = new DemoBaselineExecutor(options.evidenceStore, options.expectedBaselineFailure, clock);
+  const verificationRunner = new DemoVerificationRunner(options.evidenceStore, options.expectedBaselineFailure, clock);
+  return new RecoveryPipeline({
+    evidenceStore: options.evidenceStore,
+    reportStore: options.reportStore,
+    snapshotReader,
+    baselineExecutor,
+    patchProvider: new DemoPatchProvider(options.repositoryRoot),
+    verificationRunner,
+    verificationAudit: new NoopAudit(),
+    clock,
+  });
+}
 
 /** Existing executors may expose captured output separately from their core contract. */
 export interface BaselineReproductionExecutor extends CommandExecutor {

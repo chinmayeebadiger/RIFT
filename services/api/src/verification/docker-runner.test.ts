@@ -8,6 +8,7 @@ import { validateEvidenceItem, validateVerificationResult, type CandidatePatch, 
 import { DockerSandboxRunner, SpawnProcessRunner, type DockerSandboxRunnerOptions, type ProcessResult, type ProcessRunner } from "./docker-runner.js";
 import { InMemoryEvidenceStore, LocalEvidenceStore } from "../domain/evidence-store.js";
 import { computeEvidenceHash } from "../domain/hashing.js";
+import { computeCandidatePatchContentHash } from "../investigation/candidate-patch-ranker.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 const REVISION = { repository: "rift-demo", revision: "abcdef1" };
@@ -27,14 +28,13 @@ function output(stdout: string, exitCode: number | null = 1, rest: Partial<Proce
 }
 
 function patch(revision = REVISION): CandidatePatch {
-  return {
+  const withoutHash: Omit<CandidatePatch, "contentHash"> = {
     kind: "CandidatePatch",
     schemaVersion: 1,
     id: "patch-1",
     incidentId: "RIFT-042",
     correlationId: "run-1",
     createdAt: "2026-10-18T10:00:00.000Z",
-    contentHash: HASH,
     sourceHypothesisId: "hypothesis-1",
     baseRevision: revision,
     diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n",
@@ -43,6 +43,7 @@ function patch(revision = REVISION): CandidatePatch {
     expectedInvariant: "The total is discounted exactly once.",
     generatedBy: { actor: "fake-model" },
   };
+  return { ...withoutHash, contentHash: computeCandidatePatchContentHash(withoutHash) };
 }
 
 function plan(command = "npm", revision = REVISION): VerificationPlan {
@@ -306,6 +307,21 @@ describe("DockerSandboxRunner", () => {
     const process = new FakeProcessRunner();
     await expect(new DockerSandboxRunner(configured(process)).run(request({ ...plan(), correlationId: "another-run" }))).rejects.toThrow("different incident contexts");
     expect(process.calls).toEqual([]);
+  });
+
+  it("rejects a tampered candidate patch before reading the repository", async () => {
+    const process = new FakeProcessRunner();
+    const input = request();
+    await expect(new DockerSandboxRunner(configured(process)).run({ ...input, candidatePatch: { ...input.candidatePatch, rationale: "tampered" } })).rejects.toThrow("content hash");
+    expect(process.calls).toEqual([]);
+  });
+
+  it("redacts command environment values in returned captures", async () => {
+    const process = new FakeProcessRunner();
+    const verificationPlan = { ...plan(), baselineCommand: { ...plan().baselineCommand, environment: { API_TOKEN: "secret-token", SAFE_FLAG: "true" } } };
+    const result = await new DockerSandboxRunner(configured(process)).run(request(verificationPlan));
+    expect(result.baseline.command.environment).toEqual({ API_TOKEN: "[REDACTED]", SAFE_FLAG: "[REDACTED]" });
+    expect(JSON.stringify(result.baseline)).not.toContain("secret-token");
   });
 });
 

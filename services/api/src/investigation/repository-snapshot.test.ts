@@ -82,7 +82,7 @@ describe("RepositorySnapshotReaderAdapter", () => {
       ...request(fixture.directory, fixture.revision, ["src.ts"]),
       capability: { repositoryRevision: { repository: "fixture", revision: otherRevision }, allowedPaths: ["src.ts"] },
     })).rejects.toMatchObject({ code: "REVISION_MISMATCH" });
-    await expect(reader.read(request(fixture.directory, "0123456789abcdef0123456789abcdef01234567", ["src.ts"]))).rejects.toMatchObject({ code: "REVISION_NOT_FOUND" });
+    await expect(reader.read(request(fixture.directory, "abcdef1", ["src.ts"]))).rejects.toMatchObject({ code: "INVALID_REQUEST" });
   });
 
   it("rejects traversal, absolute, missing, and symlink paths", async () => {

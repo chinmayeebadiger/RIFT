@@ -98,6 +98,27 @@ modify the caller's checkout, deploy a patch, or equate a green patched check
 with approval. Candidate generation and isolated verification are skipped when
 the actual baseline does not reproduce the configured failure signature.
 
+For a local MVP, start the API in explicit demo mode:
+
+```sh
+RIFT_MVP_MODE=demo npm --prefix services/api run start
+```
+
+Then submit a server-owned demo recovery request:
+
+```text
+POST /api/incidents/:incidentId/recovery
+```
+
+The request accepts only `manifest`, `evidence`, and
+`expectedBaselineFailure`. Repository paths, command capabilities, model
+authority, runner image, and network policy are fixed by the server-side demo
+composition. The response includes the generated incident, hypotheses,
+candidate patches, report, and pending approval state. The API then serves the
+same artifacts through the incident hypotheses, patches, report, and approval
+routes. Normal mode fails closed unless a staged Docker pipeline is explicitly
+injected/configured; it never silently falls back to host execution.
+
 The deterministic end-to-end proof runs the real four-defect demo regression
 suite red, applies a unified diff only in a disposable workspace, runs the same
 suite green, persists separate evidence for both sides, and leaves the report
@@ -132,6 +153,9 @@ The API exposes:
 - `GET http://localhost:4000/api/incidents/RIFT-042`
 - `GET http://localhost:4000/api/incidents/RIFT-042/report` — reads the
   evidence-backed report and approval state
+- `POST http://localhost:4000/api/incidents/:incidentId/recovery` — runs the
+  local demo MVP pipeline when `RIFT_MVP_MODE=demo` is enabled; accepts only
+  server-validated manifest, evidence, and expected baseline signature fields
 - `POST http://localhost:4000/api/reports` — validates and stores a report
   assembled from investigation, patch, verification, and evidence records
 - `POST http://localhost:4000/api/reports/:reportId/approval` — records an

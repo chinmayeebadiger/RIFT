@@ -27,6 +27,13 @@ import type {
   VerificationWorkspace,
 } from "./ports.js";
 
+declare module "./ports.js" {
+  interface VerificationRequest {
+    /** The repository capability actually granted to this verification run. */
+    readonly effectiveAuthorizedPaths?: readonly string[];
+  }
+}
+
 const TERMINAL: readonly VerificationState[] = ["completed", "cancelled"];
 const STAGES: Record<VerificationState, VerificationStage> = {
   queued: "validate",
@@ -111,6 +118,22 @@ function parseChecks(value: unknown, expected: number): readonly CommandOutcome[
   if (!isRecord(value) || !Array.isArray(value.executions) || value.executions.length !== expected || !value.executions.every(isOutcome)) throw new Error("MALFORMED_CHECK_OUTPUT");
   return value.executions as unknown as readonly CommandOutcome[];
 }
+function candidatePatchContentHash(patch: VerificationRequest["patch"]): string {
+  const { contentHash: _contentHash, ...withoutHash } = patch;
+  return sha256(withoutHash as never);
+}
+function effectiveScope(request: VerificationRequest): readonly string[] {
+  return request.effectiveAuthorizedPaths ?? request.manifest.allowedPaths;
+}
+function scoped<T extends object>(value: T, paths: readonly string[]): T & { readonly effectiveAuthorizedPaths: readonly string[] } {
+  return { ...value, effectiveAuthorizedPaths: paths };
+}
+function safeScope(scope: readonly string[], manifestScope: readonly string[]): boolean {
+  return scope.length > 0 && new Set(scope).size === scope.length && scope.every((path) =>
+    typeof path === "string" && path.length > 0 && !path.startsWith("/") && !/[\\\u0000-\u001f\u007f]/u.test(path) && !path.split("/").includes(".git") &&
+    path.split("/").every((part) => part.length > 0 && part !== "." && part !== "..") &&
+    manifestScope.some((allowed) => path === allowed || path.startsWith(`${allowed}/`)));
+}
 function linkedSignal(parent: AbortSignal, controller: AbortController): void {
   if (parent.aborted) controller.abort(parent.reason);
   else parent.addEventListener("abort", () => controller.abort(parent.reason), { once: true });
@@ -167,7 +190,7 @@ export class VerificationOrchestrator implements VerificationControlPlane {
       this.transition(run, "baseline-running");
       const baselineWorkspace = await this.createWorkspace(run, "baseline");
       run.workspaces.push(baselineWorkspace);
-      const baseline = parseBaseline(await this.stage(run, "baseline", "command", () => this.runner.runBaseline({ runId: run.runId, correlationId: run.request.correlationId, manifest: run.request.manifest, plan: run.request.plan, workspace: baselineWorkspace, signal: run.controller.signal })));
+      const baseline = parseBaseline(await this.stage(run, "baseline", "command", () => this.runner.runBaseline(scoped({ runId: run.runId, correlationId: run.request.correlationId, manifest: run.request.manifest, plan: run.request.plan, workspace: baselineWorkspace, signal: run.controller.signal }, effectiveScope(run.request)))));
       run.baselineEvidenceIds = [...baseline.evidenceIds];
       if (run.controller.signal.aborted) throw abortError();
       if (baseline.evidenceIds.length === 0) throw new Error("MISSING_BASELINE_EVIDENCE");
@@ -187,7 +210,7 @@ export class VerificationOrchestrator implements VerificationControlPlane {
         else if (patched.evidenceIds.length === 0) result = this.makeResult(run, "inconclusive", baseline.exitCode, null, baseline.evidenceIds, "MISSING_PATCH_EVIDENCE");
         else {
           this.transition(run, "checks-running");
-          const checks = parseChecks(await this.stage(run, "checks", "commands", () => this.runner.runChecks({ runId: run.runId, correlationId: run.request.correlationId, plan: run.request.plan, workspace: patchedWorkspace, signal: run.controller.signal })), run.request.plan.verificationCommands.length);
+          const checks = parseChecks(await this.stage(run, "checks", "commands", () => this.runner.runChecks(scoped({ runId: run.runId, correlationId: run.request.correlationId, plan: run.request.plan, workspace: patchedWorkspace, signal: run.controller.signal }, effectiveScope(run.request)))), run.request.plan.verificationCommands.length);
           run.patchedEvidenceIds = checks.flatMap((check) => check.evidenceIds);
           this.transition(run, "classifying");
           const evidenceIds = [...baseline.evidenceIds, ...patched.evidenceIds, ...checks.flatMap((check) => check.evidenceIds)];
@@ -231,16 +254,19 @@ export class VerificationOrchestrator implements VerificationControlPlane {
     if (request.correlationId !== request.manifest.correlationId || request.correlationId !== request.plan.correlationId || request.correlationId !== request.patch.correlationId) throw new Error("CORRELATION_ID_MISMATCH");
     if (request.plan.candidatePatchId !== request.patch.id || JSON.stringify(request.plan.baseRevision) !== JSON.stringify(request.patch.baseRevision) || JSON.stringify(request.plan.baseRevision) !== JSON.stringify(request.manifest.repositoryRevision)) throw new Error("REVISION_OR_PATCH_MISMATCH");
     if (!validateIncidentManifest(request.manifest).ok || !validateVerificationPlan(request.plan).ok || !validateCandidatePatch(request.patch).ok) throw new Error("INVALID_VERIFICATION_INPUT");
+    if (request.patch.contentHash !== candidatePatchContentHash(request.patch)) throw new Error("PATCH_CONTENT_HASH_MISMATCH");
+    const scope = effectiveScope(request);
+    if (!safeScope(scope, request.manifest.allowedPaths)) throw new Error("EFFECTIVE_SCOPE_MISMATCH");
     if (!request.plan.verificationCommands.length) throw new Error("VERIFICATION_CHECKS_REQUIRED");
     if (hashValue(request.plan.baselineCommand) !== hashValue(request.manifest.reproductionCommand) || request.plan.networkAccess !== (request.manifest.policy.networkAccess ?? "disabled")) throw new Error("VERIFICATION_POLICY_MISMATCH");
     const authorized = [request.manifest.reproductionCommand, ...request.manifest.testCommands].map(hashValue);
     if ([request.plan.baselineCommand, ...request.plan.verificationCommands].some((command) => !request.manifest.policy.allowedCommands?.includes(command.command) || !authorized.includes(hashValue(command)))) throw new Error("COMMAND_NOT_AUTHORIZED");
-    if (!validateCandidatePatch(request.patch, { allowedPaths: request.manifest.allowedPaths }).ok) throw new Error("PATCH_SCOPE_MISMATCH");
+    if (!validateCandidatePatch(request.patch, { allowedPaths: scope }).ok) throw new Error("PATCH_SCOPE_MISMATCH");
     if (!/^sha256:[0-9a-f]{64}$/u.test(request.idempotencyKey)) throw new Error("INVALID_IDEMPOTENCY_KEY");
   }
 
   private async createWorkspace(run: RunState, phase: "baseline" | "patched"): Promise<VerificationWorkspace> {
-    const value = await this.stage(run, "baseline", `workspace-${phase}`, () => this.runner.createWorkspace({ runId: run.runId, correlationId: run.request.correlationId, manifest: run.request.manifest, plan: run.request.plan, phase, signal: run.controller.signal }));
+    const value = await this.stage(run, "baseline", `workspace-${phase}`, () => this.runner.createWorkspace(scoped({ runId: run.runId, correlationId: run.request.correlationId, manifest: run.request.manifest, plan: run.request.plan, phase, signal: run.controller.signal }, effectiveScope(run.request))));
     if (!isRecord(value) || typeof value.id !== "string" || value.phase !== phase) throw new Error("MALFORMED_WORKSPACE_OUTPUT");
     return value as unknown as VerificationWorkspace;
   }
@@ -311,5 +337,5 @@ class RunState {
 function stageKey(runKey: string, stage: string): string { return hashValue({ runKey, stage } as never); }
 
 export function verificationIdempotencyKey(input: Pick<VerificationRequest, "manifest" | "plan" | "patch" | "correlationId">): string {
-  return sha256(JSON.stringify({ incidentId: input.manifest?.incidentId, correlationId: input.correlationId, plan: input.plan?.contentHash, patch: input.patch?.contentHash, policy: input.manifest?.policy ?? {} }) as never);
+  return sha256(JSON.stringify({ incidentId: input.manifest?.incidentId, correlationId: input.correlationId, plan: input.plan?.contentHash, patch: input.patch?.contentHash, effectiveAuthorizedPaths: (input as VerificationRequest).effectiveAuthorizedPaths ?? input.manifest?.allowedPaths, policy: input.manifest?.policy ?? {} }) as never);
 }

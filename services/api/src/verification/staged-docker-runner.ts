@@ -11,7 +11,9 @@ import { redactSecrets } from "../domain/redaction.js";
 import { SpawnProcessRunner, type ProcessResult, type ProcessRunner, type ProcessRunOptions } from "./docker-runner.js";
 import type { ChecksOutcome, CommandOutcome, PatchOutcome, VerificationRunner, VerificationWorkspace } from "./ports.js";
 
-type Request<K extends keyof VerificationRunner> = Parameters<VerificationRunner[K]>[0];
+type Request<K extends keyof VerificationRunner> = Parameters<VerificationRunner[K]>[0] & {
+  readonly effectiveAuthorizedPaths?: readonly string[];
+};
 interface BoundedResult extends ProcessResult {
   readonly stdoutTruncated?: boolean;
   readonly stderrTruncated?: boolean;
@@ -65,6 +67,7 @@ interface RunState {
   readonly correlationId: string;
   readonly manifest: IncidentManifest;
   readonly plan: VerificationPlan;
+  readonly effectiveAuthorizedPaths: readonly string[];
   readonly workspaces: WorkspaceState[];
   reproduced: boolean;
   closing: boolean;
@@ -112,13 +115,13 @@ export class StagedDockerVerificationRunner implements VerificationRunner {
   }
 
   public async createWorkspace(request: Request<"createWorkspace">): Promise<VerificationWorkspace> {
-    this.validateContext(request.manifest, request.plan, request.correlationId);
+    this.validateContext(request.manifest, request.plan, request.correlationId, request.effectiveAuthorizedPaths);
     if (!["baseline", "patched"].includes(request.phase) || !/^[A-Za-z0-9_-]{1,128}$/u.test(request.runId)) fail("INVALID_WORKSPACE_REQUEST");
     if (request.signal.aborted) fail("CANCELLED");
     let run = this.runs.get(request.runId);
     if (run) this.assertContext(run, request);
     else {
-      run = { runId: request.runId, correlationId: request.correlationId, manifest: copy(request.manifest), plan: copy(request.plan),
+      run = { runId: request.runId, correlationId: request.correlationId, manifest: copy(request.manifest), plan: copy(request.plan), effectiveAuthorizedPaths: [...effectiveScope(request.manifest, request.effectiveAuthorizedPaths)],
         workspaces: [], reproduced: false, closing: false, failed: false, patchAttempted: false };
       this.runs.set(request.runId, run);
     }
@@ -136,7 +139,7 @@ export class StagedDockerVerificationRunner implements VerificationRunner {
       const gitArgs = ["--no-replace-objects", "--literal-pathspecs", "-C", this.options.repositoryPath];
       const resolved = await this.invoke(this.host, "git", [...gitArgs, "rev-parse", "--verify", `${revision}^{commit}`], request.signal, run.plan.timeoutMs);
       if (!completed(resolved) || resolved.stdout.toString("utf8").trim() !== revision) fail("BASE_REVISION_NOT_FOUND");
-      const paths = run.manifest.allowedPaths;
+      const paths = run.effectiveAuthorizedPaths;
       const tree = await this.invoke(this.host, "git", [...gitArgs, "ls-tree", "-rz", "-r", "--full-tree", revision, "--", ...paths], request.signal, run.plan.timeoutMs);
       if (!completed(tree) || tree.stdoutTruncated || tree.stdout.length >= (this.options.archiveLimitBytes ?? 67_108_864)) fail("UNSAFE_SOURCE_TREE");
       validateTree(tree.stdout, paths);
@@ -200,8 +203,9 @@ export class StagedDockerVerificationRunner implements VerificationRunner {
     if (request.applicationOrdinal !== 1 || !/^sha256:[0-9a-f]{64}$/u.test(request.idempotencyKey)) fail("INVALID_PATCH_APPLICATION");
     if (!run.reproduced) fail("BASELINE_NOT_REPRODUCED");
     if (patch.incidentId !== run.manifest.incidentId || patch.correlationId !== run.correlationId || patch.id !== run.plan.candidatePatchId || !sameRevision(patch.baseRevision, run.plan.baseRevision)) fail("PATCH_CONTEXT_MISMATCH");
+    if (patch.contentHash !== candidatePatchContentHash(patch)) fail("PATCH_CONTENT_HASH_MISMATCH");
     // Shared validator parses the actual diff, reconciles touchedPaths and rejects protected paths/modes.
-    if (!validateCandidatePatch(patch, { allowedPaths: run.manifest.allowedPaths }).ok) fail("PATCH_VALIDATION_FAILED");
+    if (!validateCandidatePatch(patch, { allowedPaths: run.effectiveAuthorizedPaths }).ok) fail("PATCH_VALIDATION_FAILED");
     const fingerprint = sha256({ idempotencyKey: request.idempotencyKey, patch: patch as unknown as JsonValue, workspace: state.workspace.id });
     if (run.patchAttempted) {
       if (run.patchFingerprint === fingerprint && run.patchOutcome) return run.patchOutcome;
@@ -267,7 +271,7 @@ export class StagedDockerVerificationRunner implements VerificationRunner {
     return { cleaned: true };
   }
 
-  private validateContext(manifest: IncidentManifest, plan: VerificationPlan, correlationId: string): void {
+  private validateContext(manifest: IncidentManifest, plan: VerificationPlan, correlationId: string, requestedScope?: readonly string[]): void {
     if (!validateIncidentManifest(manifest).ok || !validateVerificationPlan(plan).ok) fail("INVALID_VERIFICATION_INPUT");
     if (manifest.incidentId !== plan.incidentId || correlationId !== manifest.correlationId || correlationId !== plan.correlationId) fail("INCIDENT_OR_CORRELATION_MISMATCH");
     if (manifest.repositoryRevision.repository !== this.options.repository || !sameRevision(manifest.repositoryRevision, plan.baseRevision) || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(plan.baseRevision.revision)) fail("BASE_REVISION_MISMATCH");
@@ -280,11 +284,13 @@ export class StagedDockerVerificationRunner implements VerificationRunner {
           (command.workingDirectory !== undefined && command.workingDirectory !== "." && !safeRelative(command.workingDirectory))) fail("COMMAND_NOT_AUTHORIZED");
     }
     if (manifest.allowedPaths.some((path) => !safeRelative(path) || path.split("/").includes(".git"))) fail("PATH_NOT_ALLOWED");
-    for (const dependency of this.options.offlineDependencies ?? []) if (!inScope(dependency.workspacePath, manifest.allowedPaths)) fail("DEPENDENCY_PATH_NOT_ALLOWED");
+    const scope = effectiveScope(manifest, requestedScope);
+    for (const dependency of this.options.offlineDependencies ?? []) if (!inScope(dependency.workspacePath, scope)) fail("DEPENDENCY_PATH_NOT_ALLOWED");
   }
 
-  private assertContext(run: RunState, request: { correlationId: string; plan: VerificationPlan; manifest?: IncidentManifest }): void {
-    if (request.correlationId !== run.correlationId || !equalJson(request.plan, run.plan) || (request.manifest && !equalJson(request.manifest, run.manifest))) fail("WORKSPACE_CONTEXT_MISMATCH");
+  private assertContext(run: RunState, request: { correlationId: string; plan: VerificationPlan; manifest?: IncidentManifest; effectiveAuthorizedPaths?: readonly string[] }): void {
+    if (request.correlationId !== run.correlationId || !equalJson(request.plan, run.plan) || (request.manifest && !equalJson(request.manifest, run.manifest)) ||
+        (request.effectiveAuthorizedPaths && !equalJson(request.effectiveAuthorizedPaths, run.effectiveAuthorizedPaths))) fail("WORKSPACE_CONTEXT_MISMATCH");
   }
 
   private owned(request: { runId: string; correlationId: string; plan: VerificationPlan; workspace: VerificationWorkspace; signal: AbortSignal }, phase: VerificationWorkspace["phase"]): WorkspaceState {
@@ -338,8 +344,9 @@ export class StagedDockerVerificationRunner implements VerificationRunner {
     // retains redacted newlines/tabs/ANSI bytes without rewriting the raw capture.
     const id = this.append(state, operation, { status: commandStatus(result), exitCode: result.exitCode, encoding: "base64", textEncoding: "utf8",
       stdout: Buffer.from(stdout.text).toString("base64"), stderr: Buffer.from(stderr.text).toString("base64"),
-      stdoutBytes: result.stdout.length, stderrBytes: result.stderr.length, stdoutTruncated: Boolean(result.stdoutTruncated || result.stdout.length > streamBudget),
-      stderrTruncated: Boolean(result.stderrTruncated || result.stderr.length > streamBudget), startedAt, finishedAt: new Date().toISOString(), commandHash }, undefined,
+      stdoutBytes: result.stdoutBytes ?? result.stdout.length, stderrBytes: result.stderrBytes ?? result.stderr.length,
+      stdoutTruncated: Boolean(result.stdoutTruncated || (result.stdoutBytes ?? result.stdout.length) > streamBudget),
+      stderrTruncated: Boolean(result.stderrTruncated || (result.stderrBytes ?? result.stderr.length) > streamBudget), startedAt, finishedAt: new Date().toISOString(), commandHash }, undefined,
     stdout.redacted || stderr.redacted, [...new Set([...stdout.rules, ...stderr.rules])]);
     return { id, stdout: stdout.text, stderr: stderr.text };
   }
@@ -431,15 +438,15 @@ export class BoundedStagedProcessRunner extends SpawnProcessRunner {
       const child = spawn(command, [...args], { cwd: options.cwd, stdio: ["ignore", "pipe", "pipe"] });
       const stdout: Buffer[] = [], stderr: Buffer[] = [];
       let stdoutBytes = 0, stderrBytes = 0, stdoutTruncated = false, stderrTruncated = false, timedOut = false, cancelled = false;
-      child.stdout.on("data", (data: Buffer) => { const kept = data.subarray(0, Math.max(0, this.limitBytes - stdoutBytes)); if (kept.length) stdout.push(Buffer.from(kept)); stdoutBytes += kept.length; stdoutTruncated ||= kept.length !== data.length; });
-      child.stderr.on("data", (data: Buffer) => { const kept = data.subarray(0, Math.max(0, this.limitBytes - stderrBytes)); if (kept.length) stderr.push(Buffer.from(kept)); stderrBytes += kept.length; stderrTruncated ||= kept.length !== data.length; });
+      child.stdout.on("data", (data: Buffer) => { const kept = data.subarray(0, Math.max(0, this.limitBytes - stdoutBytes)); if (kept.length) stdout.push(Buffer.from(kept)); stdoutBytes += data.length; stdoutTruncated ||= kept.length !== data.length; });
+      child.stderr.on("data", (data: Buffer) => { const kept = data.subarray(0, Math.max(0, this.limitBytes - stderrBytes)); if (kept.length) stderr.push(Buffer.from(kept)); stderrBytes += data.length; stderrTruncated ||= kept.length !== data.length; });
       const abort = (): void => { cancelled = true; child.kill("SIGKILL"); };
       options.signal?.addEventListener("abort", abort, { once: true });
       if (options.signal?.aborted) abort();
       const timer = options.timeoutMs ? setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, options.timeoutMs) : undefined;
       const dispose = (): void => { if (timer) clearTimeout(timer); options.signal?.removeEventListener("abort", abort); };
       child.on("error", (error) => { dispose(); reject(error); });
-      child.on("close", (exitCode) => { dispose(); resolve({ exitCode, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), stdoutTruncated, stderrTruncated, timedOut, cancelled }); });
+      child.on("close", (exitCode) => { dispose(); resolve({ exitCode, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), stdoutBytes, stderrBytes, stdoutTruncated, stderrTruncated, timedOut, cancelled }); });
     });
   }
 }
@@ -459,6 +466,15 @@ function commandStatus(result: BoundedResult): CommandOutcome["status"] {
 }
 function safeRelative(path: string): boolean { return Boolean(path) && !/[\\\u0000-\u001f\u007f]/u.test(path) && !/^[A-Za-z]:/u.test(path) && path.split("/").every((part) => part !== "" && part !== "." && part !== ".."); }
 function inScope(path: string, allowedPaths: readonly string[]): boolean { return allowedPaths.some((scope) => path === scope || path.startsWith(`${scope}/`)); }
+function effectiveScope(manifest: IncidentManifest, requested?: readonly string[]): readonly string[] {
+  const scope = requested ?? manifest.allowedPaths;
+  if (scope.length === 0 || new Set(scope).size !== scope.length || scope.some((path) => !safeRelative(path) || path.split("/").includes(".git") || !inScope(path, manifest.allowedPaths))) fail("EFFECTIVE_SCOPE_MISMATCH");
+  return [...scope];
+}
+function candidatePatchContentHash(patch: { readonly contentHash: string; }): string {
+  const { contentHash: _contentHash, ...withoutHash } = patch as { readonly contentHash: string } & Record<string, unknown>;
+  return sha256(withoutHash as JsonValue);
+}
 function validateTree(buffer: Buffer, allowedPaths: readonly string[]): void {
   const text = buffer.toString("utf8");
   if (!text.endsWith("\0") || !Buffer.from(text).equals(buffer)) fail("UNSAFE_SOURCE_TREE");

@@ -8,7 +8,7 @@ diff --git a/demo/src/domain/shop.ts b/demo/src/domain/shop.ts
    if (!trimmedQuery) {
      return products;
    }
-@@ -99,5 +99,5 @@
+@@ -99,4 +99,4 @@
    return products.filter(
      (product) =>
 -      product.name.includes(trimmedQuery) || product.description.includes(trimmedQuery),
@@ -31,9 +31,9 @@ diff --git a/demo/src/domain/shop.ts b/demo/src/domain/shop.ts
    // BUG-003: coupon expiry is intentionally ignored, so WELCOME10 remains accepted.
    return { valid: true, coupon, message: "Coupon applied" };
  }
-@@ -171,5 +173,5 @@
+@@ -171,4 +173,4 @@
  export function calculateDisplayedCartTotal(subtotalCents: number, discountCents: number): number {
    // BUG-002: the presentation total deliberately applies the same discount twice.
 -  return subtotalCents - discountCents - discountCents;
 +  return subtotalCents - discountCents;
-  }
+ }

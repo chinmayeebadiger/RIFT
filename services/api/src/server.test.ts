@@ -21,6 +21,24 @@ function manifest(): Record<string, unknown> {
   };
 }
 
+function recoveryManifest(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    kind: "IncidentManifest",
+    id: "manifest-local-recovery-1",
+    incidentId: "RIFT-LOCAL-RECOVERY",
+    correlationId: "run-local-recovery-1",
+    createdAt: "2026-10-18T10:00:00.000Z",
+    repositoryRevision: { repository: "rift", revision: "825c919a11123e3eea306a7be7871978f0995cf9" },
+    allowedPaths: ["demo/src/domain/shop.ts"],
+    logSources: [{ id: "demo-log", type: "log", locator: "tests/fixtures/integrated-recovery/observations.log" }],
+    reproductionCommand: { command: "node", args: ["demo-regression-fixture"] },
+    testCommands: [{ command: "node", args: ["demo-check-fixture"] }],
+    timeWindow: { start: "2026-10-18T09:00:00.000Z", end: "2026-10-18T10:00:00.000Z" },
+    policy: { networkAccess: "disabled", allowedCommands: ["node"] },
+  };
+}
+
 describe("Rift API routes", () => {
   let server: Server;
   let baseUrl: string;
@@ -174,5 +192,74 @@ describe("Rift API routes", () => {
     });
     expect(oversized.status).toBe(413);
     expect((await oversized.json()).errors[0]).toMatchObject({ code: "BODY_TOO_LARGE", path: "$" });
+  });
+
+  it("starts a local recovery, serves generated artifacts, and records human approval", async () => {
+    const started = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY/recovery`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manifest: recoveryManifest(), evidence: [], expectedBaselineFailure: { code: "RIFT_SHOP_REGRESSION_FAILURE", signature: "4 failed" } }),
+    });
+    const startedBody = await started.json();
+
+    expect(started.status).toBe(201);
+    expect(startedBody.report.approval.status).toBe("pending");
+    expect(startedBody.report.report.status).toBe("verified");
+
+    const incident = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY`);
+    const incidents = await fetch(`${baseUrl}/api/incidents`);
+    const hypotheses = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY/hypotheses`);
+    const patches = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY/patches`);
+    const report = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY/report`);
+    expect(incident.status).toBe(200);
+    expect((await incidents.json()).some((item: { id: string }) => item.id === "RIFT-LOCAL-RECOVERY")).toBe(true);
+    expect((await hypotheses.json()).hypotheses.length).toBeGreaterThan(0);
+    expect((await patches.json()).length).toBeGreaterThan(0);
+    expect((await report.json()).approval.status).toBe("pending");
+
+    const approved = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY/report/approval`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ actorId: "local-reviewer", decision: "approved", note: "Reviewed local fixture output" }),
+    });
+    expect(approved.status).toBe(200);
+    expect((await approved.json()).approval).toMatchObject({ status: "approved", approverId: "local-reviewer" });
+  });
+
+  it("rejects recovery fields that would attempt to provide authority or identity", async () => {
+    const response = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY/recovery`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manifest: recoveryManifest(), evidence: [], expectedBaselineFailure: { code: "EXPECTED", signature: "4 failed" }, repositoryPath: "/tmp/unsafe" }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "RECOVERY_INPUT_INVALID" });
+
+    const widened = { ...recoveryManifest(), id: "manifest-local-recovery-widened", incidentId: "RIFT-LOCAL-RECOVERY-WIDENED", correlationId: "run-local-recovery-widened", allowedPaths: ["demo/src/secret.ts"] };
+    const widenedResponse = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY-WIDENED/recovery`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manifest: widened, evidence: [], expectedBaselineFailure: { code: "EXPECTED", signature: "4 failed" } }),
+    });
+    expect(widenedResponse.status).toBe(400);
+    expect(await widenedResponse.json()).toMatchObject({ code: "DEMO_PATH_NOT_ALLOWED" });
+  });
+
+  it("rejects missing or invalid approval actors", async () => {
+    const invalidManifest = { ...recoveryManifest(), id: "manifest-local-recovery-invalid", incidentId: "RIFT-LOCAL-RECOVERY-INVALID", correlationId: "run-local-recovery-invalid" };
+    const started = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY-INVALID/recovery`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ manifest: invalidManifest, evidence: [], expectedBaselineFailure: { code: "EXPECTED", signature: "4 failed" } }),
+    });
+    expect(started.status).toBe(201);
+
+    const missingActor = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY-INVALID/report/approval`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: "rejected" }),
+    });
+    expect(missingActor.status).toBe(400);
+
+    const invalidActor = await fetch(`${baseUrl}/api/incidents/RIFT-LOCAL-RECOVERY-INVALID/report/approval`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actorId: "not a bounded actor", decision: "rejected" }),
+    });
+    expect(invalidActor.status).toBe(400);
   });
 });

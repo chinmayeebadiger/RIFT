@@ -134,7 +134,7 @@ export class DockerSandboxRunner implements SandboxRunner {
     try {
       const archivePath = join(tempDirectory, "source.tar");
       const patchPath = join(tempDirectory, "candidate.patch");
-      const archive = await this.host.run("git", ["-C", resolve(request.repositoryPath), "archive", "--format=tar", plan.baseRevision.revision], {
+      const archive = await this.host.run("git", ["--no-replace-objects", "-C", resolve(request.repositoryPath), "archive", "--format=tar", plan.baseRevision.revision], {
         timeoutMs: plan.timeoutMs,
         signal: request.signal,
       });
@@ -220,6 +220,10 @@ export class DockerSandboxRunner implements SandboxRunner {
     const patch = validateCandidatePatch(request.candidatePatch);
     const plan = validateVerificationPlan(request.verificationPlan);
     if (!patch.ok || !plan.ok) throw new SandboxRunnerError("Candidate patch or verification plan failed contract validation", "INVALID_INPUT");
+    const { contentHash: _contentHash, ...patchWithoutHash } = request.candidatePatch;
+    if (request.candidatePatch.contentHash !== hashJson(patchWithoutHash)) {
+      throw new SandboxRunnerError("Candidate patch content hash does not match its canonical content", "INVALID_INPUT");
+    }
     if (request.candidatePatch.id !== request.verificationPlan.candidatePatchId) {
       throw new SandboxRunnerError("Verification plan does not select the supplied candidate patch", "INVALID_INPUT");
     }
@@ -332,7 +336,7 @@ export class DockerSandboxRunner implements SandboxRunner {
     const stderr = cleanOutput(output.stderr, streamLimit, secrets, output.stderrTruncated);
     const capture: SandboxCommandCapture = {
       phase,
-      command,
+      command: redactCommandEnvironment(command),
       status,
       exitCode: status === "timed-out" || status === "cancelled" ? null : output.exitCode,
       stdoutHash: hashBytes(Buffer.from(stdout.text)),
@@ -465,7 +469,12 @@ function emptyCapture(
   status: SandboxCommandStatus = "failed",
 ): SandboxCommandCapture {
   const timestamp = now();
-  return { phase, command, status, exitCode: null, stdoutHash: EMPTY_HASH, stderrHash: EMPTY_HASH, stdoutBytes: 0, stderrBytes: 0, startedAt: timestamp, finishedAt: timestamp };
+  return { phase, command: redactCommandEnvironment(command), status, exitCode: null, stdoutHash: EMPTY_HASH, stderrHash: EMPTY_HASH, stdoutBytes: 0, stderrBytes: 0, startedAt: timestamp, finishedAt: timestamp };
+}
+
+function redactCommandEnvironment(command: CommandSpec): CommandSpec {
+  if (command.environment === undefined) return command;
+  return { ...command, environment: Object.fromEntries(Object.keys(command.environment).sort().map((key) => [key, "[REDACTED]"])) };
 }
 
 function toFailure(error: unknown): { code: string; message: string } {

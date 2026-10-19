@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent, CandidatePatch, IncidentManifest, VerificationPlan } from "@rift/core";
 import { sha256 } from "../domain/hashing.js";
+import { computeCandidatePatchContentHash } from "../investigation/candidate-patch-ranker.js";
 import { BoundedVerificationConcurrency, InMemoryVerificationReceiptStore, VerificationOrchestrator, verificationIdempotencyKey } from "./orchestrator.js";
 import type { VerificationAuditSink, VerificationRunner } from "./ports.js";
 
@@ -16,7 +17,7 @@ function fixtures(correlationId = "correlation-1"): { manifest: IncidentManifest
   return {
     manifest: { ...base("IncidentManifest", "manifest-1", correlationId), repositoryRevision: REVISION, allowedPaths: ["src/checkout.ts"], logSources: [{ id: "log-1", type: "fixture", locator: "fixtures/log.txt" }], reproductionCommand: COMMAND, testCommands: [COMMAND], timeWindow: { start: TIME, end: "2026-10-18T11:00:00.000Z" }, policy: { networkAccess: "disabled", allowedCommands: ["npm"] } } as unknown as IncidentManifest,
     plan: { ...base("VerificationPlan", "plan-1", correlationId), candidatePatchId: "patch-1", baseRevision: REVISION, baselineCommand: COMMAND, verificationCommands: [COMMAND], timeoutMs: 30_000, networkAccess: "disabled" } as unknown as VerificationPlan,
-    patch: { ...base("CandidatePatch", "patch-1", correlationId), sourceHypothesisId: "hypothesis-1", baseRevision: REVISION, diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n", touchedPaths: ["src/checkout.ts"], rationale: "Apply the discount once.", expectedInvariant: "The final total is discounted exactly once.", generatedBy: { actor: "fake-model" } } as unknown as CandidatePatch,
+    patch: (() => { const withoutHash = { ...base("CandidatePatch", "patch-1", correlationId), sourceHypothesisId: "hypothesis-1", baseRevision: REVISION, diff: "diff --git a/src/checkout.ts b/src/checkout.ts\n--- a/src/checkout.ts\n+++ b/src/checkout.ts\n@@ -1 +1 @@\n-old\n+new\n", touchedPaths: ["src/checkout.ts"], rationale: "Apply the discount once.", expectedInvariant: "The final total is discounted exactly once.", generatedBy: { actor: "fake-model" } } as unknown as Omit<CandidatePatch, "contentHash">; return { ...withoutHash, contentHash: computeCandidatePatchContentHash(withoutHash) } as CandidatePatch; })(),
     correlationId,
   };
 }
@@ -163,5 +164,18 @@ describe("verification control-plane integration", () => {
     const result = await orchestrator.start(request).result;
     expect(result.classification).toBe("inconclusive");
     expect(runner.baselineCalls).toBe(0);
+  });
+
+  it("rejects a tampered candidate patch before any runner stage", async () => {
+    const runner = new FixtureRunner();
+    const input = fixtures();
+    const tampered = { ...input.patch, rationale: "tampered after review" };
+    const audit = new AuditLog();
+    const orchestrator = new VerificationOrchestrator(runner, audit, new BoundedVerificationConcurrency(1));
+    const result = await orchestrator.start({ ...input, patch: tampered, idempotencyKey: sha256("tampered-patch") }).result;
+    expect(result.classification).toBe("inconclusive");
+    expect(result.failure?.code).toBe("PATCH_CONTENT_HASH_MISMATCH");
+    expect(runner.baselineCalls).toBe(0);
+    expect(runner.patchCalls).toBe(0);
   });
 });

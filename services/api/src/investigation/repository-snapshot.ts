@@ -64,7 +64,7 @@ function validateRevision(value: unknown, path: string): asserts value is Reposi
   if (!isRecord(value) || typeof value.repository !== "string" || value.repository.length === 0 || typeof value.revision !== "string") {
     throw new RepositorySnapshotError(`${path} must contain a repository and revision`, "INVALID_REQUEST");
   }
-  if (!/^(?:[0-9a-f]{7,40}|[0-9a-f]{64})$/u.test(value.revision)) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(value.revision)) {
     throw new RepositorySnapshotError(`${path}.revision is not a pinned Git revision`, "INVALID_REQUEST");
   }
 }
@@ -114,7 +114,7 @@ function commandError(error: unknown): string {
 
 async function gitBuffer(repositoryRoot: string, args: readonly string[]): Promise<Buffer> {
   try {
-    const result = await execFileAsync("git", [...args], {
+    const result = await execFileAsync("git", ["--no-replace-objects", ...args], {
       cwd: repositoryRoot,
       encoding: "buffer",
       maxBuffer: 128 * 1024 * 1024,
@@ -128,7 +128,10 @@ async function gitBuffer(repositoryRoot: string, args: readonly string[]): Promi
 
 function parseTreeEntries(output: Buffer): GitEntry[] {
   const entries: GitEntry[] = [];
-  for (const record of output.toString("utf8").split("\u0000")) {
+  const text = output.toString("utf8");
+  if (output.length === 0) return entries;
+  if (!text.endsWith("\u0000") || !Buffer.from(text, "utf8").equals(output)) throw new RepositorySnapshotError("Git returned an invalid tree listing", "SNAPSHOT_IO");
+  for (const record of text.split("\u0000")) {
     if (record.length === 0) continue;
     const match = /^(\d{6}) (blob|tree|commit) ([0-9a-f]+)\t(.+)$/u.exec(record);
     if (match === null) throw new RepositorySnapshotError("Git returned an invalid tree entry", "SNAPSHOT_IO");
@@ -183,7 +186,7 @@ export class RepositorySnapshotReaderAdapter implements RepositorySnapshotReader
       if (error instanceof RepositorySnapshotError) throw new RepositorySnapshotError("pinned revision was not found", "REVISION_NOT_FOUND");
       throw error;
     }
-    if (!/^[0-9a-f]{40}$/u.test(resolvedRevision)) {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(resolvedRevision) || resolvedRevision !== revision.revision) {
       throw new RepositorySnapshotError("Git did not resolve a commit", "REVISION_NOT_FOUND");
     }
     const commitDate = (await gitBuffer(this.repositoryRoot, ["show", "-s", "--format=%cI", resolvedRevision])).toString("utf8").trim();
@@ -193,6 +196,9 @@ export class RepositorySnapshotReaderAdapter implements RepositorySnapshotReader
     const files = entries.filter((entry) => entry.type === "blob");
     const matchedPaths = new Set<string>();
     for (const entry of entries) {
+      if (entry.path.split("/").includes(".git")) throw new RepositorySnapshotError(`Git metadata path is not allowed: ${entry.path}`, "PATH_NOT_ALLOWED");
+      if (entry.type !== "blob") throw new RepositorySnapshotError(`unsupported Git tree entry: ${entry.path}`, "UNSUPPORTED_ENTRY");
+      if (!validateRelativeTreePath(entry.path)) throw new RepositorySnapshotError(`unsafe Git tree path: ${entry.path}`, "PATH_NOT_ALLOWED");
       if (entry.type !== "blob") continue;
       if (entry.mode === "120000") throw new RepositorySnapshotError(`symlink is not allowed: ${entry.path}`, "SYMLINK_NOT_ALLOWED");
       if (entry.mode !== "100644" && entry.mode !== "100755") {
@@ -262,6 +268,11 @@ export class RepositorySnapshotReaderAdapter implements RepositorySnapshotReader
       this.workspaces.delete(id);
     }
   }
+}
+
+function validateRelativeTreePath(path: string): boolean {
+  return path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !/[\u0000-\u001f\u007f]/u.test(path) &&
+    path.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
 }
 
 export const GitRepositorySnapshotReader = RepositorySnapshotReaderAdapter;
