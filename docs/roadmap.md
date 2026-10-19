@@ -26,38 +26,49 @@ implemented and tested, while the API's default test server intentionally uses
 `InMemoryEvidenceStore`; selecting a durable path for a local production-like
 run remains follow-up integration work.
 
-## M2 — Baseline reproduction and investigation
+## M2 — Baseline reproduction and investigation (complete)
 
 Deliverables: repository snapshot adapter, log/stack-trace normalization,
 timeline, deterministic hypothesis engine, and evidence citations.
 
-Exit criteria: a known fixture failure reproduces; the report names supporting
-evidence and clearly marks uncertainty.
+Exit criteria met: the M2 Rift Shop fixture is read from a pinned Git revision,
+its baseline failure is reproduced through a bounded command executor, logs and
+stack traces are normalized into a deterministic timeline, and ranked
+hypotheses cite retained evidence while separating facts, inferences, and
+unknowns. Covered by `services/api/src/m2-fixture.integration.test.ts` and the
+normalization and hypothesis-engine suites.
 
-## M3 — Candidate patch generation
+## M3 — Candidate patch generation (complete)
 
 Deliverables: patch contract, diff validation, bounded model adapter, fake model
 for offline tests, and patch ranking.
 
-Exit criteria: invalid/out-of-scope patches are rejected; every accepted patch
-has rationale, touched paths, and an expected invariant.
+Exit criteria met: malformed, oversized, out-of-scope, protected-path, and
+base-revision-mismatched diffs are rejected; bounded provider output is
+validated; the deterministic fake model produces offline candidates; and every
+accepted patch has rationale, touched paths, an expected invariant, source
+hypothesis, and pinned base revision. Covered by the shared contract,
+model-adapter, patch-ranking, and integrated recovery suites.
 
-## M4 — Isolated verification
+## M4 — Isolated verification (complete)
 
 Deliverables: runner interface, disposable Docker runner, command allowlist,
 timeouts/resource limits, baseline-versus-patch comparison, and evidence
 capture.
 
-Exit criteria: a passing and failing fixture are distinguished; sandbox escape,
-network, timeout, cancellation, and cleanup tests pass.
+Exit criteria met: passing and failing fixtures are distinguished, and sandbox
+escape, network, timeout, cancellation, output-limit, and cleanup boundaries
+are covered by offline runner and orchestration tests.
 
-## M5 — Recovery report and approval workflow
+## M5 — Recovery report and approval workflow (complete)
 
 Deliverables: evidence-backed report, audit events, human approval boundary, and
 CLI/local UI output.
 
-Exit criteria: a reviewer can reproduce the claim from the report without
-trusting hidden agent state; no production action occurs without approval.
+Exit criteria met: reports retain facts, inferences, unknowns, citations,
+hypotheses, patches, command results, and baseline-versus-patched evidence; a
+reviewer can replay the claim from those records; and the approval endpoint
+records human intent without applying, merging, pushing, or deploying changes.
 
 ## M6 — Hardening and pilot
 
