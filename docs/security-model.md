@@ -120,10 +120,12 @@ The following are observable in the current code and tests:
   hash-verifiable receipt while exposing a logical retained view. It does not
   rewrite the append-only store.
 - `make scan` passes the four local offline npm audits and the Dockerfile
-  reproducibility check. The built image is also scanned with Docker Scout;
-  the current image has eight unresolved high-severity Debian findings in
+  reproducibility check. The latest successful Docker Scout scan of the built
+  image composition reported eight unresolved high-severity Debian findings in
   `util-linux`, `zlib`, and `perl` with no fixed versions reported by Scout.
-  This remains a pilot-blocking exception, not a green security sign-off.
+  A repeat scan of the final image digest was blocked by local disk exhaustion;
+  the prior result remains pilot-blocking evidence, not a green security
+  sign-off.
 
 ## Secret handling policy
 
