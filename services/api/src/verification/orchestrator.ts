@@ -96,6 +96,7 @@ function isRecord(value: unknown): value is JsonRecord { return typeof value ===
 function hashValue(value: unknown): string { return sha256(value as never); }
 function isOutcome(value: unknown): value is CommandOutcome {
   if (!isRecord(value) || !["succeeded", "failed", "timed-out", "cancelled", "blocked"].includes(String(value.status))) return false;
+  if ((value.status === "succeeded" && value.exitCode !== 0) || (value.status === "failed" && (!Number.isSafeInteger(value.exitCode) || value.exitCode === 0))) return false;
   return (value.exitCode === null || Number.isSafeInteger(value.exitCode)) && Array.isArray(value.evidenceIds) && value.evidenceIds.every((id) => typeof id === "string" && id.length > 0);
 }
 function parseBaseline(value: unknown): CommandOutcome {
@@ -167,6 +168,7 @@ export class VerificationOrchestrator implements VerificationControlPlane {
       const baselineWorkspace = await this.createWorkspace(run, "baseline");
       run.workspaces.push(baselineWorkspace);
       const baseline = parseBaseline(await this.stage(run, "baseline", "command", () => this.runner.runBaseline({ runId: run.runId, correlationId: run.request.correlationId, manifest: run.request.manifest, plan: run.request.plan, workspace: baselineWorkspace, signal: run.controller.signal })));
+      run.baselineEvidenceIds = [...baseline.evidenceIds];
       if (run.controller.signal.aborted) throw abortError();
       if (baseline.evidenceIds.length === 0) throw new Error("MISSING_BASELINE_EVIDENCE");
       if (baseline.status !== "failed" && baseline.status !== "succeeded") {
@@ -186,6 +188,7 @@ export class VerificationOrchestrator implements VerificationControlPlane {
         else {
           this.transition(run, "checks-running");
           const checks = parseChecks(await this.stage(run, "checks", "commands", () => this.runner.runChecks({ runId: run.runId, correlationId: run.request.correlationId, plan: run.request.plan, workspace: patchedWorkspace, signal: run.controller.signal })), run.request.plan.verificationCommands.length);
+          run.patchedEvidenceIds = checks.flatMap((check) => check.evidenceIds);
           this.transition(run, "classifying");
           const evidenceIds = [...baseline.evidenceIds, ...patched.evidenceIds, ...checks.flatMap((check) => check.evidenceIds)];
           const checkFailure = checks.find((check) => check.status !== "succeeded");
@@ -224,9 +227,15 @@ export class VerificationOrchestrator implements VerificationControlPlane {
   }
 
   private validateRequest(request: VerificationRequest): void {
+    if (request.manifest.incidentId !== request.plan.incidentId || request.manifest.incidentId !== request.patch.incidentId) throw new Error("INCIDENT_ID_MISMATCH");
     if (request.correlationId !== request.manifest.correlationId || request.correlationId !== request.plan.correlationId || request.correlationId !== request.patch.correlationId) throw new Error("CORRELATION_ID_MISMATCH");
     if (request.plan.candidatePatchId !== request.patch.id || JSON.stringify(request.plan.baseRevision) !== JSON.stringify(request.patch.baseRevision) || JSON.stringify(request.plan.baseRevision) !== JSON.stringify(request.manifest.repositoryRevision)) throw new Error("REVISION_OR_PATCH_MISMATCH");
     if (!validateIncidentManifest(request.manifest).ok || !validateVerificationPlan(request.plan).ok || !validateCandidatePatch(request.patch).ok) throw new Error("INVALID_VERIFICATION_INPUT");
+    if (!request.plan.verificationCommands.length) throw new Error("VERIFICATION_CHECKS_REQUIRED");
+    if (hashValue(request.plan.baselineCommand) !== hashValue(request.manifest.reproductionCommand) || request.plan.networkAccess !== (request.manifest.policy.networkAccess ?? "disabled")) throw new Error("VERIFICATION_POLICY_MISMATCH");
+    const authorized = [request.manifest.reproductionCommand, ...request.manifest.testCommands].map(hashValue);
+    if ([request.plan.baselineCommand, ...request.plan.verificationCommands].some((command) => !request.manifest.policy.allowedCommands?.includes(command.command) || !authorized.includes(hashValue(command)))) throw new Error("COMMAND_NOT_AUTHORIZED");
+    if (!validateCandidatePatch(request.patch, { allowedPaths: request.manifest.allowedPaths }).ok) throw new Error("PATCH_SCOPE_MISMATCH");
     if (!/^sha256:[0-9a-f]{64}$/u.test(request.idempotencyKey)) throw new Error("INVALID_IDEMPOTENCY_KEY");
   }
 
@@ -263,7 +272,7 @@ export class VerificationOrchestrator implements VerificationControlPlane {
   }
 
   private makeResult(run: RunState, classification: VerificationResult["classification"], baselineExitCode: number | null, patchedExitCode: number | null, evidenceIds: readonly string[], failureCode?: string): VerificationResult {
-    const withoutHash = { kind: "VerificationResult" as const, schemaVersion: 1 as const, id: `result-${run.runId}`, incidentId: run.request.manifest.incidentId, correlationId: run.request.correlationId, createdAt: now(), verificationPlanId: run.request.plan.id, classification, baselineExitCode, patchedExitCode, evidenceIds, ...(failureCode === undefined ? {} : { failure: { code: failureCode, message: failureCode } }) };
+    const withoutHash = { kind: "VerificationResult" as const, schemaVersion: 1 as const, id: `result-${run.runId}`, incidentId: run.request.manifest.incidentId, correlationId: run.request.correlationId, createdAt: now(), verificationPlanId: run.request.plan.id, classification, baselineExitCode, patchedExitCode, evidenceIds: [...new Set([...evidenceIds, ...run.baselineEvidenceIds, ...run.patchedEvidenceIds])], baselineEvidenceIds: [...new Set(run.baselineEvidenceIds)], patchedEvidenceIds: [...new Set(run.patchedEvidenceIds)], ...(failureCode === undefined ? {} : { failure: { code: failureCode, message: failureCode } }) };
     return { ...withoutHash, contentHash: hashValue(withoutHash) } as VerificationResult;
   }
 
@@ -287,6 +296,8 @@ export class VerificationOrchestrator implements VerificationControlPlane {
 }
 
 class RunState {
+  public baselineEvidenceIds: string[] = [];
+  public patchedEvidenceIds: string[] = [];
   public state: VerificationState = "queued";
   public attempt = 1;
   public cancelReason: string | undefined;

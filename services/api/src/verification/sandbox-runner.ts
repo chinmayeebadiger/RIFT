@@ -15,6 +15,10 @@ export interface SandboxCommandCapture {
   readonly stderrBytes: number;
   readonly startedAt: string;
   readonly finishedAt: string;
+  /** IDs are exposed only after the redacted capture has been stored and read back. */
+  readonly evidenceIds?: readonly string[];
+  readonly stdoutTruncated?: boolean;
+  readonly stderrTruncated?: boolean;
 }
 
 export interface SandboxRunResult {

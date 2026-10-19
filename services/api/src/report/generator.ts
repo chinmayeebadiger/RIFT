@@ -54,7 +54,7 @@ function assertValid(value: unknown, result: ReturnType<typeof validateEvidenceI
 }
 
 function reportStatus(results: readonly VerificationResult[], requested?: RecoveryReport["status"]): RecoveryReport["status"] {
-  if (results.length === 0) return requested ?? "inconclusive";
+  if (results.length === 0) return requested === "verified" ? "inconclusive" : requested ?? "inconclusive";
   const classifications = new Set(results.map((result) => result.classification));
   if (classifications.has("regressed")) return "regressed";
   if (classifications.has("not-reproduced")) return "not-reproduced";
@@ -204,8 +204,8 @@ export class EvidenceBackedReportGenerator implements ReportGenerator {
          repositoryRevision: request.snapshot.repositoryRevision,
          adapter: request.snapshot.adapter,
        },
-       baselineResults: request.verificationResults.map((result) => ({ verificationResultId: result.id, exitCode: result.baselineExitCode, evidenceIds: [...result.evidenceIds] })),
-       patchedResults: request.verificationResults.map((result) => ({ verificationResultId: result.id, exitCode: result.patchedExitCode, evidenceIds: [...result.evidenceIds] })),
+        baselineResults: request.verificationResults.map((result) => ({ verificationResultId: result.id, exitCode: result.baselineExitCode, evidenceIds: [...(result.baselineEvidenceIds ?? [])] })),
+        patchedResults: request.verificationResults.map((result) => ({ verificationResultId: result.id, exitCode: result.patchedExitCode, evidenceIds: [...(result.patchedEvidenceIds ?? [])] })),
       approvalRequired: true,
       evidenceIds: citedEvidenceIds,
     };

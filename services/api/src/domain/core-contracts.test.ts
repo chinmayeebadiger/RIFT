@@ -40,6 +40,13 @@ function hypothesis(): Record<string, unknown> {
 }
 
 describe("shared Phase 0 contract validators", () => {
+  it("rejects verified results without reproduction, green checks, or evidence", () => {
+    const result = { ...base("VerificationResult", "result-guard"), verificationPlanId: "plan-1", classification: "verified", baselineExitCode: 1, patchedExitCode: 0, evidenceIds: ["baseline", "patched"], baselineEvidenceIds: ["baseline"], patchedEvidenceIds: ["patched"] };
+    expect(validateVerificationResult(result).ok).toBe(true);
+    for (const overrides of [{ baselineExitCode: 0 }, { baselineExitCode: null }, { patchedExitCode: 1 }, { evidenceIds: [] }, { patchedEvidenceIds: ["baseline"] }]) {
+      expect(validateVerificationResult({ ...result, ...overrides }).ok).toBe(false);
+    }
+  });
   it("validates every post-intake contract through the shared package", () => {
     const validHypothesis = hypothesis();
     const validSet = {

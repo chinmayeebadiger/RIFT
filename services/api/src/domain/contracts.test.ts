@@ -93,6 +93,14 @@ function issueCodes(result: { readonly ok: boolean; readonly issues?: readonly {
 }
 
 describe("M1 domain contract validators", () => {
+  it("retains multiline text evidence while rejecting unsafe controls and metadata", () => {
+    expect(validateEvidenceItem({ ...validEvidence(), content: "first\nsecond\r\n\tindented" }).ok).toBe(true);
+    expect(validateEvidenceItem({ ...validEvidence(), content: "nul\u0000payload" }).ok).toBe(false);
+    expect(validateEvidenceItem({ ...validEvidence(), content: { "bad\nkey": "value" } }).ok).toBe(false);
+    expect(validateEvidenceItem({ ...validEvidence(), source: { type: "log", locator: "bad\nlocator" } }).ok).toBe(false);
+    expect(validateIncidentManifest({ ...validManifest(), reproductionCommand: { command: "node", workingDirectory: "." } }).ok).toBe(true);
+    expect(validateIncidentManifest({ ...validManifest(), allowedPaths: ["."] }).ok).toBe(false);
+  });
   it("accepts all valid contracts and JSON round trips", () => {
     for (const contract of [validManifest(), validEvidence(), validAuditEvent()]) {
       const result =

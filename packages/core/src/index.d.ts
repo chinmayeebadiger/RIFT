@@ -211,6 +211,9 @@ export interface VerificationResult extends VersionedContract {
   readonly baselineExitCode: number | null;
   readonly patchedExitCode: number | null;
   readonly evidenceIds: readonly EvidenceId[];
+  /** Additive provenance partition; never conflate the two execution sides. */
+  readonly baselineEvidenceIds?: readonly EvidenceId[];
+  readonly patchedEvidenceIds?: readonly EvidenceId[];
   readonly failure?: { readonly code: string; readonly message: string };
 }
 

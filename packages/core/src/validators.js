@@ -327,7 +327,9 @@ function validatePatchDiff(diff, touchedPaths, options, issues) {
 
 function validateJsonValue(value, path, issues, depth = 0) {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
-    if (typeof value === "string" && CONTROL_CHARACTER_PATTERN.test(value)) issue(issues, path, "control_character");
+    // Text evidence may contain line breaks and tabs; binary/control payloads
+    // remain forbidden. Metadata strings and object keys stay single-line.
+    if (typeof value === "string" && UNSAFE_DIFF_CONTROL_CHARACTER_PATTERN.test(value)) issue(issues, path, "control_character");
     return true;
   }
   if (typeof value === "number") {
@@ -596,7 +598,13 @@ export const validateCandidatePatch = (value, options) => {
 export const validateVerificationPlan = (value) => validateSimple(value, "VerificationPlan", ["candidatePatchId", "baseRevision", "baselineCommand", "verificationCommands", "timeoutMs", "networkAccess"], (record, issues) => {
   idValue(record.candidatePatchId, "$.candidatePatchId", issues); if (requireRecord(record.baseRevision, "$.baseRevision", issues)) { boundedString(record.baseRevision.repository, "$.baseRevision.repository", issues); boundedString(record.baseRevision.revision, "$.baseRevision.revision", issues); } validateCommand(record.baselineCommand, "$.baselineCommand", issues); if (arrayValue(record.verificationCommands, "$.verificationCommands", issues)) record.verificationCommands.forEach((command, index) => validateCommand(command, `$.verificationCommands[${index}]`, issues)); finiteInteger(record.timeoutMs, "$.timeoutMs", issues, 1, MAX_COMMAND_TIMEOUT_MS); enumValue(record.networkAccess, ["disabled", "allowlisted"], "$.networkAccess", issues);
 });
-export const validateVerificationResult = (value) => validateSimple(value, "VerificationResult", ["verificationPlanId", "classification", "baselineExitCode", "patchedExitCode", "evidenceIds", "failure"], (record, issues) => {
+export const validateVerificationResult = (value) => validateSimple(value, "VerificationResult", ["verificationPlanId", "classification", "baselineExitCode", "patchedExitCode", "evidenceIds", "baselineEvidenceIds", "patchedEvidenceIds", "failure"], (record, issues) => {
+  for (const key of ["baselineEvidenceIds", "patchedEvidenceIds"]) if (hasOwn(record, key)) {
+    uniqueStrings(record[key], `$.${key}`, issues, idValue);
+    if (Array.isArray(record[key]) && Array.isArray(record.evidenceIds) && record[key].some((id) => !record.evidenceIds.includes(id))) issue(issues, `$.${key}`, "unresolved_evidence");
+  }
+  if (Array.isArray(record.baselineEvidenceIds) && Array.isArray(record.patchedEvidenceIds) && record.baselineEvidenceIds.some((id) => record.patchedEvidenceIds.includes(id))) issue(issues, "$.patchedEvidenceIds", "overlapping_evidence");
+  if (record.classification === "verified" && (!Number.isSafeInteger(record.baselineExitCode) || record.baselineExitCode === 0 || record.patchedExitCode !== 0 || !Array.isArray(record.evidenceIds) || record.evidenceIds.length === 0 || hasOwn(record, "failure"))) issue(issues, "$.classification", "baseline_reproduction_required");
   idValue(record.verificationPlanId, "$.verificationPlanId", issues); enumValue(record.classification, ["verified", "regressed", "not-reproduced", "inconclusive"], "$.classification", issues); ["baselineExitCode", "patchedExitCode"].forEach((key) => { if (record[key] !== null && !Number.isSafeInteger(record[key])) issue(issues, `$.${key}`, "invalid_integer"); }); uniqueStrings(record.evidenceIds, "$.evidenceIds", issues, idValue); if (hasOwn(record, "failure") && requireRecord(record.failure, "$.failure", issues)) { unknownKeys(record.failure, ["code", "message"], "$.failure", issues); boundedString(record.failure.code, "$.failure.code", issues); boundedString(record.failure.message, "$.failure.message", issues); }
 });
 export const validateRepositorySnapshot = (value) => validateSimple(value, "RepositorySnapshot", ["repositoryRevision", "files", "adapter"], (record, issues) => {

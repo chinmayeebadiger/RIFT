@@ -98,6 +98,11 @@ function request() {
 }
 
 describe("evidence-backed recovery reports", () => {
+  it("cannot request verified without any verification result", () => {
+    const record = new EvidenceBackedReportGenerator().generate({ ...request(), verificationResults: [], verificationStatus: "verified" });
+    expect(record.report.status).toBe("inconclusive");
+    expect(() => new EvidenceBackedReportGenerator().generate({ ...request(), verificationResults: request().verificationResults.map((result) => ({ ...result, baselineExitCode: 0 })) })).toThrow("Verification result failed contract validation");
+  });
   it("builds a replayable report and leaves approval pending", () => {
     const record = new EvidenceBackedReportGenerator().generate(request());
     expect(record.report.status).toBe("verified");
