@@ -18,7 +18,7 @@ vi.mock("@/lib/incidents", async () => ({
   ...await import("./incidents"),
   fetchIncidents: vi.fn(), fetchIncident: vi.fn(), fetchRecoveryReport: vi.fn(), submitApprovalIntent: vi.fn(),
 }));
-import Home from "../app/page";
+import Home from "../components/rift-home";
 import { fetchIncident, fetchIncidents, fetchRecoveryReport, submitApprovalIntent } from "@/lib/incidents";
 
 type Element = React.ReactElement<Record<string, any>>;
@@ -98,6 +98,17 @@ async function workspace(id = "RIFT-A") {
 afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
 describe("dashboard integration", () => {
+  it("renders real destinations for every workspace tab", () => {
+    vi.stubGlobal("React", React);
+    vi.mocked(fetchIncidents).mockResolvedValue([]);
+    const render = new HookRender(Home).render();
+    const sidebar = find(render, "Sidebar");
+    const sidebarTree = new HookRender(sidebar.type as Component, sidebar.props).render().tree;
+    const navButtons = elements(sidebarTree).filter((node) => typeof node.type === "function" && node.type.name === "NavButton");
+    const links = navButtons.flatMap((button) => elements(new HookRender(button.type as Component, button.props).render().tree)).filter((node) => node.type === "a");
+    expect(links.map((link) => link.props.href)).toEqual(expect.arrayContaining(["/", "/incidents", "/evidence", "/patches", "/workspace", "/settings"]));
+  });
+
   it("keeps incident and patch analysis available while a report is missing or loading", async () => {
     vi.stubGlobal("React", React);
     const report = deferred<RecoveryReportRecord | null>();
