@@ -37,11 +37,13 @@ when the baseline failure was not reproduced.
 
 ## Required checks per change
 
-The single developer entry point is `make test`; it must remain offline-capable.
-As implementation begins, it should invoke the repository's unit, integration,
-type, lint, and security checks without requiring network access. CI may run
-additional image and dependency scans. A check that cannot run locally must be
-labelled as such rather than replaced with a no-op.
+The single developer behavior entry point is `make test`; it remains
+offline-capable and runs the Python foundation/documentation checks plus the
+frontend, API, security, and demo suites. Typecheck and production build are
+explicit release checks (`make typecheck` and `make build`), while dependency
+and Docker configuration checks are run by `make scan`. CI or a release
+operator may add registry-backed image scanning. A check that cannot run
+locally must be labelled as such rather than replaced with a no-op.
 
 ## Current dashboard checks
 
@@ -68,13 +70,12 @@ approval and verification boundaries before enabling them.
 
 ## Repair-target demo
 
-The repository includes an offline Rift Shop under `demo/`. It is intentionally
-broken and provides a repeatable target for incident investigation exercises.
-`make test` runs its green smoke and HTTP integration tests so the website is
-known to start and respond. `make demo-regression` runs the four correct-
-behavior tests that are expected to fail on the baseline and become green as
-the defects are repaired. The suite uses fixed inputs and timestamps, so each
-failure is reproducible on a clean machine.
+The repository includes an offline Rift Shop under `demo/`. It provides a
+repeatable target for incident investigation exercises and retains the original
+four-defect fixture history. `make test` runs its green smoke, HTTP integration,
+and repaired correct-behavior regression tests. `make demo-regression` can also
+run the four regression tests independently. The suite uses fixed inputs and
+timestamps, so the behavior is reproducible on a clean machine.
 
 ## Reliability targets to establish during M6
 

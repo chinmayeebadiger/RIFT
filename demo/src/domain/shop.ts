@@ -95,10 +95,11 @@ export function searchProducts(query: string): readonly Product[] {
     return products;
   }
 
-  // BUG-004: search intentionally compares original casing instead of normalizing both sides.
+  const normalizedQuery = trimmedQuery.toLowerCase();
   return products.filter(
     (product) =>
-      product.name.includes(trimmedQuery) || product.description.includes(trimmedQuery),
+      product.name.toLowerCase().includes(normalizedQuery) ||
+      product.description.toLowerCase().includes(normalizedQuery),
   );
 }
 
@@ -121,11 +122,10 @@ export function adjustCartItem(cart: Cart, productId: string, delta: number): Ca
     return createCart(cart.items);
   }
 
-  // BUG-001: the quantity is deliberately not clamped at zero.
   return createCart(
-    cart.items.map((item) =>
-      item.productId === productId ? { ...item, quantity: item.quantity + delta } : item,
-    ),
+    cart.items
+      .map((item) => item.productId === productId ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item)
+      .filter((item) => item.quantity > 0),
   );
 }
 
@@ -154,9 +154,10 @@ export function validateCoupon(code: string | undefined, now = new Date()): Coup
     return { valid: false, message: "Coupon not found" };
   }
 
-  // `now` is retained in the signature so the intended repair boundary is explicit.
-  void now;
-  // BUG-003: coupon expiry is intentionally ignored, so WELCOME10 remains accepted.
+  if (new Date(coupon.expiresAt).getTime() <= now.getTime()) {
+    return { valid: false, message: "Coupon expired" };
+  }
+
   return { valid: true, coupon, message: "Coupon applied" };
 }
 
@@ -169,8 +170,7 @@ export function calculateDiscount(subtotalCents: number, coupon?: Coupon): numbe
 }
 
 export function calculateDisplayedCartTotal(subtotalCents: number, discountCents: number): number {
-  // BUG-002: the presentation total deliberately applies the same discount twice.
-  return subtotalCents - discountCents - discountCents;
+  return subtotalCents - discountCents;
 }
 
 export function summarizeCart(cart: Cart, couponCode?: string, now = new Date()): CartSummary {

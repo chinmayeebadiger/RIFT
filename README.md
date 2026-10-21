@@ -36,6 +36,12 @@ for the offline integrated pipeline without external services or credentials.
   isolation tests, and reliability targets.
 - [Documentation plan](docs/documentation-plan.md) — documentation sets and
   ownership expectations.
+- [API reference](docs/api-reference.md) — local routes, request boundaries,
+  recovery cancellation, reports, and approval semantics.
+- [Recovery report guide](docs/recovery-report-guide.md) — how to review
+  evidence, classifications, unknowns, and the approval boundary.
+- [Contributor guide](docs/contributor-guide.md) — pinned toolchain, offline
+  checks, fixture rules, and review checklist.
 
 ## Stack
 
@@ -61,19 +67,18 @@ make scan
 ```
 
 `make test` runs the foundation checks, the frontend API-client suite, the API
-route suite, and the demo website smoke/integration suite. After the
-dependencies have been installed, the test commands are deterministic and do
-not contact external services. Run `make typecheck` and `make build` before a
-release. The demo's repair-target suite is intentionally failing on the
-baseline so a bug is observable before it is fixed:
+route suite, the demo website smoke/integration suite, and the repaired demo
+regression suite. After the dependencies have been installed, the test
+commands are deterministic and do not contact external services. Run
+`make typecheck` and `make build` before a release. The demo's repair-target
+suite covers the four seeded defects:
 
 ```sh
 make demo-regression
 ```
 
-It contains four deterministic regression tests, one for each seeded defect.
-Run it again after a repair; it should become green without changing the test
-expectations.
+It contains four deterministic regression tests, one for each seeded defect, and
+is included in `make test`.
 
 `make scan` runs `npm audit --offline --audit-level=high` against every committed
 Node lockfile and checks the Dockerfile configuration without contacting a
@@ -163,6 +168,10 @@ The API exposes:
 - `POST http://localhost:4000/api/incidents/:incidentId/recovery` — runs the
   local demo MVP pipeline when `RIFT_MVP_MODE=demo` is enabled; accepts only
   server-validated manifest, evidence, and expected baseline signature fields
+- `GET http://localhost:4000/api/recovery/:runId` and
+  `POST http://localhost:4000/api/recovery/:runId/cancel` — inspect or request
+  cancellation of a recovery run; cancellation preserves evidence and does not
+  apply a patch
 - `POST http://localhost:4000/api/reports` — validates and stores a report
   assembled from investigation, patch, verification, and evidence records
 - `POST http://localhost:4000/api/reports/:reportId/approval` — records an
@@ -260,6 +269,7 @@ nonzero baseline reproduced first, the patched checks exited green, and both
 sides have persisted evidence. M6 hardening is implemented with offline
 dependency/Docker configuration scans, retention controls, bounded reliability
 tests, threat-model documentation, an operator runbook, rollback guidance, and
-a pilot plan. A named human security sign-off and registry-backed scan of the
-exact staged image remain external release records; durable orchestration,
-authenticated reviewer identity, and a browser/e2e suite remain residual work.
+  a pilot plan. The named human security sign-off and a current registry-backed
+  scan of the exact staged image remain open external release gates; the
+  current scan record is not a green sign-off. Durable orchestration,
+  authenticated reviewer identity, and a browser/e2e suite remain residual work.

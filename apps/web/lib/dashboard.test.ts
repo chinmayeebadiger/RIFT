@@ -104,9 +104,31 @@ describe("dashboard integration", () => {
     const render = new HookRender(Home).render();
     const sidebar = find(render, "Sidebar");
     const sidebarTree = new HookRender(sidebar.type as Component, sidebar.props).render().tree;
+    const aside = elements(sidebarTree).find((node) => node.type === "aside");
+    expect(aside?.props.className).toContain("flex-col");
     const navButtons = elements(sidebarTree).filter((node) => typeof node.type === "function" && node.type.name === "NavButton");
     const links = navButtons.flatMap((button) => elements(new HookRender(button.type as Component, button.props).render().tree)).filter((node) => node.type === "a");
     expect(links.map((link) => link.props.href)).toEqual(expect.arrayContaining(["/", "/incidents", "/evidence", "/patches", "/workspace", "/settings"]));
+  });
+
+  it("filters the incident workspace through the accessible search field", async () => {
+    vi.stubGlobal("React", React);
+    vi.mocked(fetchIncidents).mockResolvedValue([
+      { id: "RIFT-A", title: "Checkout timeout", service: "payments" },
+      { id: "RIFT-B", title: "Queue backlog", service: "worker" },
+    ] as Incident[]);
+    const render = new HookRender(Home).render();
+    await settle();
+    render.render();
+    const header = find(render, "Header");
+    const headerRender = new HookRender(header.type as Component, header.props).render();
+    const search = find(headerRender, "input");
+    expect(search.props["aria-label"]).toBe("Search workspace");
+    search.props.onChange({ target: { value: "queue" } });
+    render.render();
+    expect(find(render, "IncidentSelector").props.incidents).toHaveLength(1);
+    expect(find(render, "IncidentSelector").props.incidents[0].id).toBe("RIFT-B");
+    render.unmount();
   });
 
   it("keeps incident and patch analysis available while a report is missing or loading", async () => {

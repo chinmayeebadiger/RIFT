@@ -46,9 +46,9 @@ export interface RecoveryReport {
   verificationResultIds?: readonly string[];
   candidatePatchIds?: readonly string[];
   evidenceCitations?: readonly { evidenceId: string; locator: string; relation: string }[];
-  hypotheses?: readonly { hypothesisId: string; statement: string }[];
-  patches?: readonly { candidatePatchId: string; touchedPaths: readonly string[] }[];
-  commands?: readonly { executionId: string; status: string }[];
+  hypotheses?: readonly { hypothesisId: string; statement: string; status?: string; confidence?: number }[];
+  patches?: readonly { candidatePatchId: string; touchedPaths: readonly string[]; sourceHypothesisId?: string; rationale?: string; expectedInvariant?: string }[];
+  commands?: readonly { executionId: string; status: string; exitCode?: number | null; command?: unknown }[];
   environmentFingerprint?: { snapshotId: string } | null;
   baselineResults?: readonly { verificationResultId: string; exitCode: number | null }[];
   patchedResults?: readonly { verificationResultId: string; exitCode: number | null }[];

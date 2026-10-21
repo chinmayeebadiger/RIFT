@@ -1,22 +1,29 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { dirname, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findIncident, demoIncidents, type Incident } from "./domain/incidents.js";
-import { InMemoryEvidenceStore } from "./domain/evidence-store.js";
+import type { IncidentManifest } from "./domain/contracts.js";
+import { InMemoryEvidenceStore, LocalEvidenceStore } from "./domain/evidence-store.js";
 import type { EvidenceStore } from "./domain/evidence-store.js";
 import { intakeIncidentManifest, ManifestValidationError, MAX_MANIFEST_BYTES } from "./domain/intake.js";
 import { findRecoveryData } from "./domain/recovery-data.js";
-import { InMemoryReportStore, ReportStoreError } from "./report/store.js";
+import { InMemoryReportStore, LocalReportStore, ReportStoreError } from "./report/store.js";
 import { EvidenceBackedReportGenerator, ReportGenerationError } from "./report/generator.js";
 import type { HumanApprovalRequest, ReportGenerationRequest, ReportStore } from "./report/ports.js";
 import {
   createDemoRecoveryPipeline,
   createRecoveryPipeline,
+  DemoPatchProvider,
   RecoveryPipelineError,
   type RecoveryPipelineDependencies,
   type RecoveryPipelineRequest,
   type RecoveryPipelineResult,
 } from "./pipeline/index.js";
+import { RepositorySnapshotReaderAdapter } from "./investigation/repository-snapshot.js";
+import { BoundedCommandExecutor } from "./investigation/command-executor.js";
+import { StagedDockerVerificationRunner } from "./verification/staged-docker-runner.js";
+import type { VerificationAuditSink } from "./verification/ports.js";
 
 const SERVICE_NAME = "rift-api";
 const SERVICE_VERSION = "0.1.0";
@@ -37,6 +44,7 @@ interface HealthResponse {
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
+  if (response.destroyed || response.writableEnded) return;
   const payload = JSON.stringify(body);
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -96,6 +104,8 @@ export interface ApiServerOptions {
   readonly pipelineDependencies?: RecoveryPipelineDependencies;
   /** Server-owned source root; it is never read from a recovery request. */
   readonly demoRepositoryRoot?: string;
+  /** Directory for the default append-only local evidence and report stores. */
+  readonly dataDirectory?: string;
 }
 
 interface RecoveryArtifacts {
@@ -110,6 +120,13 @@ interface ApiState {
   readonly demoRepositoryRoot: string;
   readonly dynamicIncidents: Map<string, Incident>;
   readonly artifacts: Map<string, RecoveryArtifacts>;
+  readonly recoveryRuns: Map<string, RecoveryRunState>;
+}
+
+interface RecoveryRunState {
+  readonly incidentId: string;
+  readonly controller: AbortController;
+  status: "running" | "completed" | "cancelled" | "failed";
 }
 
 class RecoveryRequestError extends Error {
@@ -179,13 +196,54 @@ function buildPipeline(state: ApiState, request: RecoveryPipelineRequest, expect
   if (process.env.NODE_ENV === "test" || process.env.RIFT_MVP_MODE === "demo") {
     return createDemoRecoveryPipeline({ repositoryRoot: state.demoRepositoryRoot, evidenceStore: state.evidenceStore, reportStore: state.reportStore, expectedBaselineFailure: expected });
   }
-  if (!process.env.RIFT_STAGED_DOCKER_IMAGE) throw new RecoveryRequestError("STAGED_DOCKER_CONFIG_REQUIRED", "Recovery is disabled until a staged Docker composition is configured", 503);
-  throw new RecoveryRequestError("STAGED_DOCKER_COMPOSITION_REQUIRED", "A staged Docker pipeline must be injected through pipelineFactory or pipelineDependencies", 503);
+  const image = process.env.RIFT_STAGED_DOCKER_IMAGE;
+  if (!image) throw new RecoveryRequestError("STAGED_DOCKER_CONFIG_REQUIRED", "Recovery is disabled until a staged Docker composition is configured", 503);
+  const manifest = request.manifest as IncidentManifest;
+  const repository = process.env.RIFT_STAGED_DOCKER_REPOSITORY ?? manifest.repositoryRevision.repository;
+  if (repository !== manifest.repositoryRevision.repository) throw new RecoveryRequestError("STAGED_DOCKER_REPOSITORY_MISMATCH", "The staged Docker repository does not match the recovery manifest", 503);
+  const snapshotReader = new RepositorySnapshotReaderAdapter({ repositoryRoot: state.demoRepositoryRoot });
+  const baselineExecutor = new BoundedCommandExecutor({ snapshotProvider: snapshotReader, containerImage: image });
+  const verificationRunner = new StagedDockerVerificationRunner({ repositoryPath: state.demoRepositoryRoot, repository, image, evidenceStore: state.evidenceStore, expectedBaselineFailure: expected });
+  const verificationAudit: VerificationAuditSink = { append: () => undefined };
+  return createRecoveryPipeline({ evidenceStore: state.evidenceStore, reportStore: state.reportStore, snapshotReader, baselineExecutor, patchProvider: new DemoPatchProvider(state.demoRepositoryRoot), verificationRunner, verificationAudit });
 }
 
 function handleRequest(request: IncomingMessage, response: ServerResponse, state: ApiState): void {
   const { evidenceStore, reportStore } = state;
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
+
+  const recoveryStatusPath = requestUrl.pathname.match(/^\/api\/recovery\/([^/]+)$/u);
+  if (request.method === "GET" && recoveryStatusPath) {
+    const run = state.recoveryRuns.get(decodeURIComponent(recoveryStatusPath[1]));
+    if (run === undefined) {
+      sendJson(response, 404, { error: "Recovery run not found", code: "RECOVERY_RUN_NOT_FOUND" });
+      return;
+    }
+    sendJson(response, 200, { runId: decodeURIComponent(recoveryStatusPath[1]), incidentId: run.incidentId, status: run.status });
+    return;
+  }
+
+  const recoveryCancelPath = requestUrl.pathname.match(/^\/api\/recovery\/([^/]+)\/cancel$/u);
+  const incidentRecoveryCancelPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/recovery\/([^/]+)\/cancel$/u);
+  const incidentRecoveryStopPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/recovery\/(?:cancel|stop)$/u);
+  const incidentRecoveryDeletePath = request.method === "DELETE" ? requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/recovery$/u) : null;
+  if ((request.method === "POST" || request.method === "DELETE") && (recoveryCancelPath || incidentRecoveryCancelPath || incidentRecoveryStopPath || incidentRecoveryDeletePath)) {
+    const incidentId = incidentRecoveryCancelPath?.[1] ?? incidentRecoveryStopPath?.[1] ?? incidentRecoveryDeletePath?.[1];
+    const explicitRunId = recoveryCancelPath?.[1] ?? incidentRecoveryCancelPath?.[2];
+    const matchingRuns = incidentId === undefined ? [] : [...state.recoveryRuns.entries()].filter(([, candidate]) => candidate.incidentId === decodeURIComponent(incidentId) && candidate.status === "running");
+    const runId = decodeURIComponent(explicitRunId ?? (matchingRuns.length === 1 ? matchingRuns[0][0] : ""));
+    const run = state.recoveryRuns.get(runId);
+    if (run === undefined || (incidentId !== undefined && run.incidentId !== decodeURIComponent(incidentId))) {
+      sendJson(response, 404, { error: "Recovery run not found", code: "RECOVERY_RUN_NOT_FOUND" });
+      return;
+    }
+    if (run.status === "running") {
+      run.controller.abort("cancelled by HTTP caller");
+      run.status = "cancelled";
+    }
+    sendJson(response, 202, { runId, incidentId: run.incidentId, status: "cancellation-requested" });
+    return;
+  }
   if (request.method === "POST" && requestUrl.pathname === "/api/incidents/intake") {
     void readJson(request).then((body) => {
       try {
@@ -206,11 +264,18 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, state
   const recoveryPath = requestUrl.pathname.match(/^\/api\/incidents\/([^/]+)\/recovery$/u);
   if (request.method === "POST" && recoveryPath) {
     const incidentId = decodeURIComponent(recoveryPath[1]);
+    const requestedRunId = request.headers["x-rift-recovery-run-id"];
+    const runId = typeof requestedRunId === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(requestedRunId) ? requestedRunId : randomUUID();
+    const controller = new AbortController();
+    const runState: RecoveryRunState = { incidentId, controller, status: "running" };
+    state.recoveryRuns.set(runId, runState);
+    request.once("aborted", () => controller.abort("HTTP request aborted"));
     void readJson(request).then((body) => {
       try {
         const parsed = recoveryRequest(body, incidentId, evidenceStore);
-        const pipeline = buildPipeline(state, parsed.request, parsed.expected);
-        return pipeline.run(parsed.request).then((result) => {
+        const pipeline = buildPipeline(state, { ...parsed.request, signal: controller.signal }, parsed.expected);
+        return pipeline.run({ ...parsed.request, signal: controller.signal }).then((result) => {
+          runState.status = controller.signal.aborted ? "cancelled" : "completed";
           const incident = dynamicIncident(result);
           state.dynamicIncidents.set(incident.id, incident);
           state.artifacts.set(incident.id, { result, incident });
@@ -220,24 +285,28 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, state
             hypothesisSet: result.hypothesisSet,
             patches: result.patchGeneration.candidatePatches,
             report: result.reportRecord,
+            recoveryRunId: runId,
           });
         });
       } catch (error: unknown) {
+        runState.status = controller.signal.aborted ? "cancelled" : "failed";
         if (error instanceof ManifestValidationError) {
           sendJson(response, error.statusCode, { error: "Recovery manifest rejected", code: error.errors[0]?.code, errors: error.errors });
         } else if (error instanceof RecoveryRequestError) {
           sendJson(response, error.statusCode, { error: error.message, code: error.code });
         } else {
-          sendJson(response, 422, { error: error instanceof Error ? error.message : "Recovery request failed", code: error instanceof RecoveryPipelineError ? error.code : "RECOVERY_FAILED" });
+          const code = error instanceof RecoveryPipelineError ? error.code : "RECOVERY_FAILED";
+          sendJson(response, code === "CANCELLED" ? 409 : 422, { error: error instanceof Error ? error.message : "Recovery request failed", code, recoveryRunId: runId });
         }
       }
     }).catch((error: unknown) => {
+      runState.status = controller.signal.aborted ? "cancelled" : "failed";
       if (error instanceof RecoveryRequestError) {
         sendJson(response, error.statusCode, { error: error.message, code: error.code });
         return;
       }
       const code = error instanceof Error && "code" in error ? String(error.code) : "RECOVERY_FAILED";
-      sendJson(response, code === "BODY_TOO_LARGE" ? 413 : code === "MALFORMED_JSON" ? 400 : 422, { error: error instanceof Error ? error.message : "Recovery request failed", code });
+      sendJson(response, code === "BODY_TOO_LARGE" ? 413 : code === "MALFORMED_JSON" ? 400 : code === "CANCELLED" ? 409 : 422, { error: error instanceof Error ? error.message : "Recovery request failed", code, recoveryRunId: runId });
     });
     return;
   }
@@ -414,8 +483,15 @@ function handleRequest(request: IncomingMessage, response: ServerResponse, state
 }
 
 export function createApiServer(options: ApiServerOptions = {}): Server {
-  const evidenceStore = options.evidenceStore ?? new InMemoryEvidenceStore();
-  const reportStore = options.reportStore ?? new InMemoryReportStore();
+  const dataDirectory = options.dataDirectory ?? process.env.RIFT_DATA_DIR ?? join(process.cwd(), "reports");
+  // Vitest compositions must remain isolated and deterministic. The live server
+  // uses append-only JSONL stores, while callers can still inject either store.
+  const evidenceStore = options.evidenceStore ?? (process.env.NODE_ENV === "test"
+    ? new InMemoryEvidenceStore()
+    : new LocalEvidenceStore(join(dataDirectory, "evidence.jsonl")));
+  const reportStore = options.reportStore ?? (process.env.NODE_ENV === "test"
+    ? new InMemoryReportStore()
+    : new LocalReportStore(join(dataDirectory, "reports.jsonl")));
   const state: ApiState = {
     evidenceStore,
     reportStore,
@@ -423,6 +499,7 @@ export function createApiServer(options: ApiServerOptions = {}): Server {
     demoRepositoryRoot: options.demoRepositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../.."),
     dynamicIncidents: new Map(),
     artifacts: new Map(),
+    recoveryRuns: new Map(),
   };
   return createServer((request, response) => handleRequest(request, response, state));
 }

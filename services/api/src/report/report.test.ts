@@ -1,7 +1,10 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { withEvidenceHash } from "../domain/hashing.js";
 import { EvidenceBackedReportGenerator, ReportGenerationError } from "./generator.js";
-import { InMemoryReportStore, ReportStoreError } from "./store.js";
+import { InMemoryReportStore, LocalReportStore, ReportStoreError } from "./store.js";
 
 const TIME = "2026-10-18T10:00:00.000Z";
 const HASH = `sha256:${"a".repeat(64)}`;
@@ -201,5 +204,18 @@ describe("evidence-backed recovery reports", () => {
       ...request(),
       evidence: [{ ...evidence(), incidentId: "RIFT-999" }],
     })).toThrowError("Evidence context does not match report request: evidence-1");
+  });
+
+  it("reopens durable reports and preserves a human approval decision", () => {
+    const directory = mkdtempSync(join(tmpdir(), "rift-report-store-test-"));
+    try {
+      const path = join(directory, "reports.jsonl");
+      const record = new EvidenceBackedReportGenerator().generate(request());
+      expect(new LocalReportStore(path).save(record)).toEqual(record);
+      const approved = new LocalReportStore(path).recordApproval(record.report.id, { actorId: "alice", decision: "approved" }, TIME);
+      expect(new LocalReportStore(path).get(record.report.id)).toEqual(approved);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

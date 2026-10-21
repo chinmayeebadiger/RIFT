@@ -55,9 +55,9 @@ The pilot owner may start only when all of these are recorded:
 6. Operators can identify the run owner, platform cleanup owner, security
    escalation owner, and independent human approval reviewer.
 7. The rollback/stop procedure in [`operator-runbook.md`](operator-runbook.md)
-   has been walked through with the exact integration. The current API has no
-   pause or cancel HTTP route; the owner must show the control-plane handle or
-   document the stop/escalation path.
+   has been walked through with the exact integration. The API exposes
+   recovery status and cancellation routes but no pause endpoint; the owner
+   must show the control-plane handle or document the stop/escalation path.
 8. The security sign-off checklist below is complete, with residual risks
    explicitly accepted for the bounded pilot.
 

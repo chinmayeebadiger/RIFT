@@ -17,12 +17,14 @@ the code and update it in the same change as a contract or policy change.
   risks.
 - **M6 pilot plan:** [`pilot-plan.md`](pilot-plan.md) defines pilot scope,
   entry/exit criteria, scenarios, metrics, and security sign-off.
-- **API/schema reference:** versioned manifests, results, and compatibility
-  policy with examples containing synthetic data only.
-- **Contributor guide:** runtime pin, lockfile workflow, `make test`, fixture
-  rules, and review checklist.
-- **Recovery report guide:** how to read evidence, confidence, unknowns, and
-  verification classifications.
+- **API/schema reference:** [`api-reference.md`](api-reference.md) documents
+  versioned manifests, results, recovery cancellation, and compatibility
+  routes with examples containing synthetic data only.
+- **Contributor guide:** [`contributor-guide.md`](contributor-guide.md) records
+  runtime pins, lockfile workflow, `make test`, fixture rules, and the review
+  checklist.
+- **Recovery report guide:** [`recovery-report-guide.md`](recovery-report-guide.md)
+  explains evidence, confidence, unknowns, classifications, and approval.
 
 ## Documentation acceptance checklist
 

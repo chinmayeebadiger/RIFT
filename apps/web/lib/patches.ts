@@ -1,4 +1,4 @@
-import type { CandidatePatch, HypothesisSet } from "@rift/core";
+import type { CandidatePatch, HypothesisSet, PatchGenerationResponse } from "@rift/core";
 
 export type { CandidatePatch, Hypothesis, HypothesisSet } from "@rift/core";
 
@@ -28,6 +28,9 @@ export function fetchHypotheses(incidentId: string): Promise<HypothesisSet> {
 }
 
 export async function fetchCandidatePatches(incidentId: string): Promise<CandidatePatch[]> {
-  const response = await request<CandidatePatch[] | { patches: CandidatePatch[] }>(`/api/incidents/${encodeURIComponent(incidentId)}/patches`);
-  return Array.isArray(response) ? response : response.patches;
+  const response = await request<CandidatePatch[] | { patches?: CandidatePatch[]; candidatePatches?: CandidatePatch[] } | PatchGenerationResponse>(`/api/incidents/${encodeURIComponent(incidentId)}/patches`);
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response.patches)) return response.patches as CandidatePatch[];
+  if (Array.isArray(response.candidatePatches)) return [...response.candidatePatches];
+  return [];
 }

@@ -94,10 +94,13 @@ The verifier's useful terminal classifications are:
 ## Cancel a run
 
 The control-plane interface exposes `VerificationOrchestrator.cancel(runId,
-reason)`, which aborts the linked worker signal. The current HTTP API does not
-expose a cancel route. An integration that cannot call the orchestrator must
-stop accepting new work and escalate rather than inventing an HTTP cancellation
-operation.
+reason)`, which aborts the linked worker signal. The local HTTP API also exposes
+`POST /api/recovery/<runId>/cancel`, incident-scoped cancel/stop routes, and
+`DELETE /api/incidents/<incidentId>/recovery` as a cancellation alias. These
+routes request cancellation and preserve evidence; they do not imply that a
+patch was applied or safely undone. There is no pause endpoint. An integration
+that cannot call either the control-plane handle or an HTTP cancellation route
+must stop accepting new work and escalate rather than inventing an operation.
 
 When cancellation is available:
 

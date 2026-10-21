@@ -16,7 +16,7 @@ RUN npm --prefix apps/web ci \
     && npm --prefix apps/web run build \
     && npm --prefix services/api run build \
     && npm --prefix demo run build \
-    && npm --prefix demo test -- --run src/domain/shop.test.ts src/server.test.ts \
+     && npm --prefix demo test -- --run src/domain/shop.test.ts src/server.test.ts src/domain/shop.regression.test.ts \
     && python3 -m unittest discover -s tests -p 'test_*.py' -v \
     && npm --prefix apps/web prune --omit=dev \
     && npm --prefix services/api prune --omit=dev \

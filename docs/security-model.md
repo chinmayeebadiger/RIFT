@@ -52,8 +52,8 @@ The security invariants are:
    not an identity provider.
 2. **Intake to evidence store:** normalized contracts and SHA-256 content hashes
    are checked before append. `LocalEvidenceStore` is append-only and fails
-   closed on corrupt startup data; the default API composition still uses an
-   in-memory store.
+   closed on corrupt startup data; the default local API uses it under
+   `RIFT_DATA_DIR` while tests may inject an in-memory store.
 3. **Evidence to model adapter:** only redaction-safe content may cross this
    boundary. The current model adapter rejects secret-bearing input and the
    `LocalEvidenceStore` exposes redacted model views; this is not a promise that
@@ -88,7 +88,7 @@ The security invariants are:
 | Model returns a dangerous or out-of-scope diff | Bad patch or misleading report | Model output is validated, bounded, ranked, and applied only in a disposable workspace | Provider prompt/data handling and model correctness need pilot evidence; no model is an authority |
 | Baseline is green or signature differs | False claim of a verified repair | Baseline runs first; signature and evidence are required; result becomes `not-reproduced` or `inconclusive` | Representative fixture coverage and replay measurements are M6 work |
 | Timeout, cancellation, or lost Docker response | Orphan process/container or false success | Abort signals, bounded process capture, cancellation state, independent cleanup, uncertain patch is not retried | A cleanup failure may leave a resource; operator escalation and host inspection are required |
-| Replay or evidence tampering | Incorrect incident conclusion | Canonical hashes, append-only JSONL option, immutable IDs, evidence-linked reports | Default API stores are in memory; multi-process durability and durable audit remain open |
+| Replay or evidence tampering | Incorrect incident conclusion | Canonical hashes, append-only JSONL stores, immutable IDs, evidence-linked reports | Multi-process durability, locking, and durable centralized audit remain open |
 | Approval spoofing or accidental deployment | Unauthorized production change | Approval is human-only in the contract; no push/merge/deploy/working-tree mutation exists | Current API actor headers/body are not authentication; integrate identity before any broader use |
 | Retention removes needed evidence | Loss of investigation history | M6 retention helper uses a signed-by-hash dry-run plan, explicit actor authorization, and logical filtering without rewriting the source | The helper is not scheduled or durable in the API; define policy and persist receipts before pilot exit |
 | Vulnerable dependency or image | Supply-chain compromise | Lockfiles are checked in; `make scan` performs offline npm audit checks and Docker configuration checks; staged image must be digest-pinned | A registry-backed CVE scan of the exact staged image still requires an operator/tooling outside this repository; pilot is blocked until that evidence exists |
@@ -181,9 +181,10 @@ not a substitute for a registry-backed CVE report for the exact staged image.
 
 - The local API is not an authenticated multi-tenant service. Header/body actor
   fields are input validation, not proof of identity.
-- The default server composition uses in-memory evidence and report stores;
-  process restart loses those records. `LocalEvidenceStore` is available but is
-  not selected by the default API server.
+- Test compositions may use in-memory evidence and report stores; those records
+  disappear on process restart. The default local API selects append-only JSONL
+  evidence and report stores under `RIFT_DATA_DIR` (default `./reports`), but
+  this remains single-process local persistence rather than centralized audit.
 - The current retention state and receipts are process-local unless an outer
   integration persists them. There is no scheduler, backup policy, or automatic
   legal hold implementation.

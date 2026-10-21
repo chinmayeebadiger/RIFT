@@ -26,6 +26,15 @@ describe("patch API client", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/incidents/RIFT-042/patches", { headers: { Accept: "application/json" } });
   });
 
+  it("reads the canonical patch-generation envelope from the API", async () => {
+    const patches = [{ id: "patch-1", diff: "- old\n+ new", touchedPaths: ["src/server.ts"] }];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ candidatePatches: patches }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+
+    await expect(fetchCandidatePatches("RIFT-042")).resolves.toEqual(patches);
+  });
+
   it("exposes API errors for patch data", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: "Incident not found" }), { status: 404, headers: { "Content-Type": "application/json" } }),

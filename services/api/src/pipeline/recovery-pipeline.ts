@@ -159,7 +159,7 @@ class DemoVerificationRunner implements VerificationRunner {
   }
 }
 
-class DemoPatchProvider implements CandidatePatchProvider {
+export class DemoPatchProvider implements CandidatePatchProvider {
   public readonly name = "demo-fixture-model";
   public constructor(private readonly repositoryRoot: string) {}
 
@@ -459,6 +459,7 @@ export class RecoveryPipeline {
         } finally { this.expectations.delete(plan.id); }
       }
       // Validate every evidence record, including records written by injected workers.
+      if (request.signal?.aborted) throw new RecoveryPipelineError("CANCELLED");
       const evidence = this.evidence(manifest);
       const generated = this.reporter.generate({ ...context, investigationResult: investigation,
         candidatePatches: patchGeneration.candidatePatches, verificationResults, verificationPlans,
@@ -468,6 +469,7 @@ export class RecoveryPipeline {
       });
       checked(validateRecoveryReport(generated.report), manifest);
       if (generated.approval.status !== "pending") throw new RecoveryPipelineError("APPROVAL_MUST_REMAIN_PENDING");
+      if (request.signal?.aborted) throw new RecoveryPipelineError("CANCELLED");
       this.persist(generated.report, manifest);
       const reportRecord = this.dependencies.reportStore.save(generated);
       return { manifest, snapshot, baseline, reproduced, normalization, timeline, hypothesisSet, investigation, patchGeneration, verificationPlans, verificationResults, reportRecord };

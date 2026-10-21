@@ -10,7 +10,7 @@ dev:
 		npm --prefix services/api run start & API_PID=$$!; \
 		npm --prefix apps/web run dev
 
-test: test-foundation test-web test-api test-security test-demo
+test: test-foundation test-web test-api test-security test-demo demo-regression
 
 test-foundation:
 	python3 -m unittest discover -s tests -p 'test_*.py' -v
@@ -27,7 +27,6 @@ test-security:
 test-demo:
 	npm --prefix demo test -- --run src/domain/shop.test.ts src/server.test.ts
 
-# The repair-target suite is intentionally red until all four seeded bugs are fixed.
 demo-regression:
 	npm --prefix demo test -- --run src/domain/shop.regression.test.ts
 
