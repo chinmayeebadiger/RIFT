@@ -1,5 +1,5 @@
-import Home from "../components/rift-home";
+import WebsiteWorkspace from "../components/website-workspace";
 
 export default function Page() {
-  return <Home />;
+  return <WebsiteWorkspace />;
 }

@@ -30,7 +30,7 @@ export function fetchHypotheses(incidentId: string): Promise<HypothesisSet> {
 export async function fetchCandidatePatches(incidentId: string): Promise<CandidatePatch[]> {
   const response = await request<CandidatePatch[] | { patches?: CandidatePatch[]; candidatePatches?: CandidatePatch[] } | PatchGenerationResponse>(`/api/incidents/${encodeURIComponent(incidentId)}/patches`);
   if (Array.isArray(response)) return response;
-  if (Array.isArray(response.patches)) return response.patches as CandidatePatch[];
+  if ("patches" in response && Array.isArray(response.patches)) return response.patches as CandidatePatch[];
   if (Array.isArray(response.candidatePatches)) return [...response.candidatePatches];
   return [];
 }
